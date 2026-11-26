@@ -154,7 +154,7 @@ void ShowCatalogMenu(const CatalogApp& app, POINT pt, std::function<void(bool)> 
 void ShowOverflow(const std::vector<std::wstring>& keys, RECT anchor);
 void Reorder(const std::wstring& key, int to);
 
-void ApplySettings(const Settings& s);
+void ApplySettings(const Settings& s, std::optional<bool> committedAutoUpdate = std::nullopt);
 bool BarPopupOpen();
 void CloseBarPopups();
 void ConfigureBar(Bar& bar);

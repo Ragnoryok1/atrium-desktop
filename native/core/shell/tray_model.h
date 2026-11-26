@@ -161,6 +161,7 @@ private:
         TrayIcon icon;
         tray::Action action = tray::Action::Left;
         bool systemTray = false;
+        bool allowProgramWake = false;
     };
     struct WorkerState;
     void Worker();
@@ -168,7 +169,7 @@ private:
     void RunClickJob(IUIAutomation* uia, const Job& job, const tray::ShellSession& session, ULONGLONG findStart);
     void RunRefreshJob(WorkerState& ws, const tray::ShellSession& session, ULONGLONG findStart);
     void RebuildSnapshot(bool forceNotify);
-    bool ClickHosted(const TrayIcon& icon, tray::HostAction action, RECT cell = {});
+    bool ClickHosted(const TrayIcon& icon, tray::HostAction action, RECT cell = {}, bool allowProgramWake = false);
     void EnqueueUrgent(Job job);
     HWND notify_;
     UINT msg_;

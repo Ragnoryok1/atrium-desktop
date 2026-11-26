@@ -15,6 +15,7 @@ struct StartupState {
     std::wstring runValue;
     bool hasRunValue = false;
     bool runReadOk = true;
+    bool taskReadOk = true;
 };
 
 struct StartupPlan {

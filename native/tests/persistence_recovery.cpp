@@ -650,6 +650,12 @@ void CheckLogonTaskDecisions()
           "disable refuses when task belongs to another install");
     Check(samePlan(PlanStartupChange({exe, exe, {}, false, false}, false), {false, false, false, false, false}),
           "disable refuses when Run registry read fails");
+    Check(samePlan(PlanStartupChange({exe, {}, {}, false, true, false}, true, StartupMode::Run), {false, false, false, false, false}),
+          "Run mode refuses when Task Scheduler query fails");
+    Check(samePlan(PlanStartupChange({exe, {}, {}, false, true, false}, true, StartupMode::Task), {false, false, false, false, false}),
+          "Task mode refuses when Task Scheduler query fails");
+    Check(samePlan(PlanStartupChange({exe, {}, cmd, true, true, false}, false), {false, false, false, false, false}),
+          "disable refuses when Task Scheduler query fails");
 }
 
 } // namespace

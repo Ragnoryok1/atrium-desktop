@@ -156,7 +156,7 @@ Messenger ItemMessenger(const TaskItem& t, const PinnedApp& pin, std::wstring& e
 } // namespace
 
 // Applies settings to the bar and the task model.
-void ApplySettings(const Settings& s)
+void ApplySettings(const Settings& s, std::optional<bool> committedAutoUpdate)
 {
     if (SetLanguage(s.language) && g_app.widgets)
         g_app.widgets->ReloadLanguage();
@@ -177,7 +177,7 @@ void ApplySettings(const Settings& s)
     g_app.tasks->SetShowRunning(s.showRunning);
     ApplyDesktopAndSystemSettings(s);
     if (g_app.updates)
-        g_app.updates->SetAutoCheck(s.autoUpdate);
+        g_app.updates->SetAutoCheck(committedAutoUpdate.value_or(s.autoUpdate));
     SyncDisplayBars(s);
     if (g_app.barOn != s.bar) {
         g_app.barOn = s.bar;

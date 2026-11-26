@@ -233,6 +233,13 @@ void TestPointerRightFallbackAndActionTarget()
           "Target preserves original icon identity when explorerTarget is set");
     Check(icon.ActionTarget().identity == L"uid:2:2:2" && icon.ActionTarget().runtime == std::vector<int>{20, 30},
           "ActionTarget returns strict Explorer binding when explorerTarget is set");
+
+    Check(!ShouldAllowExeForegroundFallback(false, false, Resolution::ShellChanged) && !ShouldAllowExeForegroundFallback(false, false, Resolution::Ambiguous) &&
+              !ShouldAllowExeForegroundFallback(false, false, Resolution::Conflict) && !ShouldAllowExeForegroundFallback(false, false, Resolution::Missing),
+          "ordinary tray clicks never fall back to ForegroundExisting when target identity failed or vanished");
+    Check(ShouldAllowExeForegroundFallback(false, true, Resolution::Record), "ordinary tray click with valid target permits ForegroundExisting fallback");
+    Check(ShouldAllowExeForegroundFallback(true, false, Resolution::Missing) && ShouldAllowExeForegroundFallback(true, false, Resolution::Ambiguous),
+          "Dock OpenExisting retains exe foreground wake fallback");
 }
 } // namespace
 

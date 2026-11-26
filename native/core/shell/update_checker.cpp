@@ -123,7 +123,7 @@ void StartWorker(const std::wstring& arguments)
         Log(L"update: could not start background queue (%lu)", GetLastError());
 }
 
-void DownloadRelease(const json::JsonObject& release, const Version& current)
+void DownloadRelease(const json::JsonObject& release, const Version& current, const std::function<bool()>& allowDownload)
 {
     std::wstring tag = release.GetNamedString(L"tag_name").c_str();
     auto latest = ParseVersion(tag);
@@ -138,6 +138,10 @@ void DownloadRelease(const json::JsonObject& release, const Version& current)
         auto asset = value.GetObject();
         if (asset.GetNamedString(L"name") != assetName)
             continue;
+        if (allowDownload && !allowDownload()) {
+            Log(L"update: skipped automatic download for %s because autoUpdate was disabled", tag.c_str());
+            return;
+        }
         json::JsonObject payload;
         std::wstring version;
         for (unsigned part : *latest)
@@ -156,7 +160,7 @@ void DownloadRelease(const json::JsonObject& release, const Version& current)
     }
 }
 
-bool CheckLatestRelease(HANDLE stop, const Version& current, bool autoCheck)
+bool CheckLatestRelease(HANDLE stop, const Version& current, bool autoCheck, const std::function<bool()>& allowDownload)
 {
     try {
         winrt::Windows::Web::Http::HttpClient http;
@@ -174,7 +178,7 @@ bool CheckLatestRelease(HANDLE stop, const Version& current, bool autoCheck)
             return false;
         auto release = json::JsonObject::Parse(request.GetResults());
         std::wstring tag = release.GetNamedString(L"tag_name").c_str();
-        DownloadRelease(release, current);
+        DownloadRelease(release, current, allowDownload);
         Log(L"update: checked latest release %s", tag.c_str());
     } catch (const winrt::hresult_error& error) {
         if (autoCheck)
@@ -288,7 +292,13 @@ void UpdateChecker::Run()
                 manualRequested_ = false;
             }
             checked = Now();
-            if (!CheckLatestRelease(stop_, current, isAuto))
+            auto allowDownload = [this, isAuto] {
+                if (!isAuto)
+                    return true;
+                std::lock_guard lock(mutex_);
+                return autoCheck_;
+            };
+            if (!CheckLatestRelease(stop_, current, isAuto, allowDownload))
                 break;
             state.SetNamedValue(L"checked", json::JsonValue::CreateNumberValue(double(checked)));
             if (!WriteTextFile(path, state.Stringify().c_str()))

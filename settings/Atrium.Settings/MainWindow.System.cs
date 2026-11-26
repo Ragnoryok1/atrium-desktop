@@ -199,8 +199,8 @@ public sealed partial class MainWindow
             _startupUpdateChecked = true;
             if (!CoreClient.Development)
             {
-                if (CurrentSettings.AutoUpdate)
-                    _ = CheckForUpdatesAsync();
+                if (_session.Saved.AutoUpdate)
+                    _ = CheckForUpdatesAsync(isAuto: true);
                 else
                     _ = RefreshDownloadAsync();
             }

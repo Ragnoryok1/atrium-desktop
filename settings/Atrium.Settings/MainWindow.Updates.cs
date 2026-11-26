@@ -91,9 +91,10 @@ public sealed partial class MainWindow
         finally { _downloadRefreshBusy = false; }
     }
 
-    private async Task QueueDownloadAsync(ReleaseInfo? release)
+    private async Task QueueDownloadAsync(ReleaseInfo? release, bool isAuto = false)
     {
         if (_queueingDownload) return;
+        if (isAuto && (!_session.Saved.AutoUpdate || _updatesClosed)) return;
         _queueingDownload = true;
         ShowInstallAction();
         try
@@ -131,7 +132,7 @@ public sealed partial class MainWindow
 
     private async void OnCheckForUpdates(object sender, RoutedEventArgs e) => await CheckForUpdatesAsync();
 
-    private async Task CheckForUpdatesAsync()
+    private async Task CheckForUpdatesAsync(bool isAuto = false)
     {
         if (_updateCheck != null) return;
         using var cancel = new CancellationTokenSource();
@@ -156,7 +157,7 @@ public sealed partial class MainWindow
                 return;
             }
             if (failText != null) UpdateAvailableButton.Visibility = Visibility.Visible;
-            else if (_transferStatus is { CanRetry: false }) await QueueDownloadAsync(null);
+            else if (_transferStatus is { CanRetry: false }) await QueueDownloadAsync(null, isAuto);
             var release = await ReleaseInfo.FetchLatestAsync(cancel.Token);
             if (cancel.IsCancellationRequested) return;
             if (release == null)
@@ -174,7 +175,7 @@ public sealed partial class MainWindow
             _latestRelease = release;
             ShowInstallAction();
             MainAbout.ReleaseLinksPanel.Visibility = Visibility.Visible;
-            if (failText == null && comparison > 0 && release.Download != null) await QueueDownloadAsync(release);
+            if (failText == null && comparison > 0 && release.Download != null) await QueueDownloadAsync(release, isAuto);
             else if (failText == null && _transferStatus != null) MainAbout.UpdateStatusText.Text = _transferStatus.Text;
         }
         catch (Exception error) when (error is HttpRequestException or OperationCanceledException

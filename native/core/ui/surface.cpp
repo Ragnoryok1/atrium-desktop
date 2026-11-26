@@ -457,6 +457,7 @@ void Surface::Show(RECT rect, bool activate, POINT anchor, bool pop)
     hiding_ = false;
     if (!visible_) {
         visible_ = true;
+        failedFrames_ = 0;
         firstPaint_ = !wasHiding;
         if (!wasHiding)
             StartGlassWait();
@@ -611,8 +612,10 @@ bool Surface::EnsureDevice()
     if (d2d_)
         return true;
     shared_ = SharedDevice();
-    if (!shared_)
+    if (!shared_) {
+        RetryFrame();
         return false;
+    }
     const auto size = BufferSize();
     int w = int(size.width), h = int(size.height);
     DXGI_SWAP_CHAIN_DESC1 desc{};
@@ -630,8 +633,7 @@ bool Surface::EnsureDevice()
         FAILED(visual_->SetContent(swap_.get())) || FAILED(target_->SetRoot(visual_.get())) || FAILED(s.dcomp->Commit()) ||
         FAILED(s.d2d->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, d2d_.put()))) {
         Log(L"surface: swap chain setup failed");
-        s.lost = true; // a fresh shared device next time
-        ResetDevice();
+        RecoverDevice(); // marks shared_->lost, resets, and retries boundedly
         return false;
     }
     bufW_ = w;

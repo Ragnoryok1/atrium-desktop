@@ -26,7 +26,7 @@ bool Surface::PrepareSwapTarget(int w, int h)
         d2d_->SetTarget(nullptr);
         backTarget_ = nullptr;
         if (FAILED(swap_->ResizeBuffers(2, UINT(w), UINT(h), DXGI_FORMAT_B8G8R8A8_UNORM, 0))) {
-            ResetDevice();
+            RecoverDevice();
             return false;
         }
         bufW_ = w;
@@ -37,7 +37,7 @@ bool Surface::PrepareSwapTarget(int w, int h)
         D2D1_BITMAP_PROPERTIES1 bp = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
                                                              D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
         if (FAILED(swap_->GetBuffer(0, IID_PPV_ARGS(back.put()))) || FAILED(d2d_->CreateBitmapFromDxgiSurface(back.get(), &bp, backTarget_.put()))) {
-            ResetDevice();
+            RecoverDevice();
             return false;
         }
     }
@@ -90,7 +90,6 @@ void Surface::PaintFrame()
         RecoverDevice();
         return;
     }
-    failedFrames_ = 0;
     paintMs_ = ms;
     presentGen_ = glassGen_;
     presentPending_ = true;
@@ -108,7 +107,7 @@ void Surface::Present()
         ApplyPlacement();
         const DXGI_MATRIX_3X2_F matrix{1, 0, 0, 1, float(window_.left - nativeWindow_.left), float(window_.top - nativeWindow_.top)};
         if (FAILED(swap_.as<IDXGISwapChain2>()->SetMatrixTransform(&matrix))) {
-            ResetDevice();
+            RecoverDevice();
             return;
         }
         // One composed frame later the region can forget the previous bounds.
@@ -122,6 +121,7 @@ void Surface::Present()
         RecoverDevice();
         return;
     }
+    failedFrames_ = 0;
     const double ms = paintMs_;
     // Frame statistics of an animation (a run of frames that asked for more).
     double end = ClockMs();

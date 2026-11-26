@@ -479,6 +479,9 @@ bool StrictActionTargetCompatible(const HostedEntry& h, const ExplorerEntry& e, 
             return false;
         if (h.hasUid && eUid != h.uid)
             return false;
+        uint64_t hHwnd = 0, hUid = 0;
+        if (ParseHostHwndKey(h.key, hHwnd, hUid) && eHwnd != 0 && hHwnd != 0 && eHwnd != hHwnd)
+            return false;
     } else if (h.hasUid && UidOf(e.recordId) != h.uid) {
         return false;
     }

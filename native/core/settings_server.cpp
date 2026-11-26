@@ -240,6 +240,12 @@ Settings SettingsServer::Current()
     return current_;
 }
 
+Settings SettingsServer::Saved()
+{
+    std::lock_guard g(lock_);
+    return saved_;
+}
+
 bool SettingsServer::Save(const Settings& s, std::wstring* warning, std::wstring* error) const
 {
     if (warning)

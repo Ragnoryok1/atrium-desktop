@@ -313,16 +313,15 @@ void DesktopBackdrop::RunCaptureStart(const std::shared_ptr<Starting>& start, co
     } catch (const winrt::hresult_error& e) {
         s.error = e.code();
     }
+    winrt::Windows::Graphics::Capture::GraphicsCaptureItem closeItem{nullptr};
+    winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool closePool{nullptr};
+    winrt::Windows::Graphics::Capture::GraphicsCaptureSession closeSession{nullptr};
     {
         std::lock_guard g(start->lock);
-        if (start->abandoned || !s.ok) { // too late or failed: release local WGC objects here
-            try {
-                if (s.session)
-                    s.session.Close();
-                if (s.pool)
-                    s.pool.Close();
-            } catch (const winrt::hresult_error&) {
-            }
+        if (start->abandoned || !s.ok) { // too late or failed: release local WGC objects outside lock
+            closeItem = std::move(s.item);
+            closeSession = std::move(s.session);
+            closePool = std::move(s.pool);
             start->ok = false;
             start->error = s.error;
         } else {
@@ -334,6 +333,13 @@ void DesktopBackdrop::RunCaptureStart(const std::shared_ptr<Starting>& start, co
             start->error = S_OK;
         }
         start->done = true;
+    }
+    try {
+        if (closeSession)
+            closeSession.Close();
+        if (closePool)
+            closePool.Close();
+    } catch (const winrt::hresult_error&) {
     }
     start->finished.store(true, std::memory_order_release);
     if (start->doneEvent)
@@ -451,18 +457,24 @@ bool DesktopBackdrop::StartCapture()
 
 void DesktopBackdrop::StopCapture()
 {
-    if (starting_) { // still starting: dropped when it is done, or now if it is done but not adopted
+    if (starting_) { // still starting: dropped when it is done, or release adopted WGC objects outside lock
         starting_->stop.store(true, std::memory_order_release);
+        winrt::Windows::Graphics::Capture::GraphicsCaptureItem abandonItem{nullptr};
+        winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool abandonPool{nullptr};
+        winrt::Windows::Graphics::Capture::GraphicsCaptureSession abandonSession{nullptr};
         {
             std::lock_guard g(starting_->lock);
             starting_->abandoned = true;
-            if (starting_->session)
-                starting_->session.Close();
-            if (starting_->pool)
-                starting_->pool.Close(); // its handler holds `starting_`
-            starting_->session = nullptr;
-            starting_->pool = nullptr;
-            starting_->item = nullptr;
+            abandonItem = std::move(starting_->item);
+            abandonSession = std::move(starting_->session);
+            abandonPool = std::move(starting_->pool); // its handler holds `starting_`
+        }
+        try {
+            if (abandonSession)
+                abandonSession.Close();
+            if (abandonPool)
+                abandonPool.Close();
+        } catch (const winrt::hresult_error&) {
         }
         if (!starting_->finished.load(std::memory_order_acquire))
             retiredStarting_.push_back(starting_);

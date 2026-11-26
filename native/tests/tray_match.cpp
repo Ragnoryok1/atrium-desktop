@@ -303,10 +303,12 @@ void TestNvidiaContainerIcons()
 }
 void TestHostedTargetVsFallbackSeparation()
 {
-    // Strict Tier 0/1/2 matches grant hostedTarget, whereas Tier 3..6 and FallbackHostedMatch only populate hostedFallback.
+    // Strict Tier 0/1/2 matches grant hostedTarget when identity fields (GUID or non-zero PID/HWND/UID) agree;
+    // conflicting HWND, Tier 3..6, and FallbackHostedMatch only populate hostedFallback.
     const std::vector<HostedEntry> hosted{
         {L"guid:{AAAAAAAA-1111-2222-3333-444444444444}", L"c:\\app\\strict_guid.exe", L"Strict GUID", L"", L"", 0, false, 10},
         {L"hwnd:100:1", L"c:\\app\\strict_uid.exe", L"Alpha", L"", L"", 1, true, 20},
+        {L"hwnd:6f:11", L"c:\\app\\matched_uid.exe", L"Matched Hwnd", L"", L"", 11, true, 21},
         {L"hwnd:200:2", L"c:\\app\\mismatch.exe", L"Mismatch", L"", L"", 2, true, 30},
         {L"hwnd:300:3", L"", L"Elevated Tip", L"", L"", 3, true, 40},
         {L"hwnd:400:4", L"c:\\app\\shared.exe", L"Primary Icon", L"", L"", 4, true, 50},
@@ -315,19 +317,29 @@ void TestHostedTargetVsFallbackSeparation()
     const std::vector<ExplorerEntry> explorer{
         {L"guid:{AAAAAAAA-1111-2222-3333-444444444444}", L"c:\\app\\strict_guid.exe", L"Different Tip", true},
         {L"uid:20:999:1", L"c:\\app\\strict_uid.exe", L"Different Alpha", true},
+        {L"uid:21:111:11", L"c:\\app\\matched_uid.exe", L"Different Hwnd Tip", true},
         {L"uid:30:888:99", L"c:\\app\\mismatch.exe", L"Mismatch", true},
         {L"uid:40:777:3", L"c:\\app\\elevated.exe", L"Elevated Tip", true},
         {L"uid:50:666:9", L"c:\\app\\shared.exe", L"Shared Explorer Tip", true},
     };
     const auto merged = MergeHostedIcons(hosted, explorer);
     Check(merged.hostedFallback[0] == 0 && merged.hostedTarget[0] == 0, "Tier 0 GUID match sets both hostedFallback and hostedTarget");
-    Check(merged.hostedFallback[1] == 1 && merged.hostedTarget[1] == 1, "Tier 1 unique same-exe uid match sets both hostedFallback and hostedTarget");
-    Check(merged.hostedFallback[2] == 2 && merged.hostedTarget[2] == kNone,
+    Check(merged.hostedFallback[1] == 1 && merged.hostedTarget[1] == kNone,
+          "Tier 1 unique uid with conflicting HWND keeps hostedFallback but rejects hostedTarget");
+    Check(merged.hostedFallback[2] == 2 && merged.hostedTarget[2] == 2,
+          "Tier 1 unique same-exe uid match with agreeing HWND sets both hostedFallback and hostedTarget");
+    Check(merged.hostedFallback[3] == 3 && merged.hostedTarget[3] == kNone,
           "Tier 2 tip match with conflicting uid keeps hostedFallback but rejects hostedTarget");
-    Check(merged.hostedFallback[3] == 3 && merged.hostedTarget[3] == kNone, "Tier 3 empty-exe tip match borrows hostedFallback without granting hostedTarget");
-    Check(merged.hostedFallback[4] == 4 && merged.hostedTarget[4] == kNone, "Tier 6 same-exe fallback borrows hostedFallback without granting hostedTarget");
-    Check(merged.hostedFallback[5] == 4 && merged.hostedTarget[5] == kNone, "shared FallbackHostedMatch borrows hostedFallback without granting hostedTarget");
+    Check(merged.hostedFallback[4] == 4 && merged.hostedTarget[4] == kNone, "Tier 3 empty-exe tip match borrows hostedFallback without granting hostedTarget");
+    Check(merged.hostedFallback[5] == 5 && merged.hostedTarget[5] == kNone, "Tier 6 same-exe fallback borrows hostedFallback without granting hostedTarget");
+    Check(merged.hostedFallback[6] == 5 && merged.hostedTarget[6] == kNone, "shared FallbackHostedMatch borrows hostedFallback without granting hostedTarget");
     Check(merged.extraExplorer.empty(), "matched/suppressed explorer entries leave no extras");
+
+    // Two tray windows in one process using the same uID=1 on incomplete sides never grant cross-window hostedTarget.
+    const auto crossHwnd = MergeHostedIcons({{L"hwnd:100:1", L"c:\\app\\dual.exe", L"Account A", L"", L"", 1, true, 70}},
+                                            {{L"uid:70:200:1", L"c:\\app\\dual.exe", L"Account B", true}});
+    Check(crossHwnd.hostedFallback[0] == 0 && crossHwnd.hostedTarget[0] == kNone,
+          "two tray windows in same exe with same uID never grant cross-window hostedTarget");
 
     // A hwnd: hosted icon paired with a guid: Explorer record in Tier 2 must not claim hostedTarget.
     const auto guidOnly = MergeHostedIcons({{L"hwnd:10:1", L"c:\\app\\x.exe", L"X Tip", L"", L"", 1, true, 10}},

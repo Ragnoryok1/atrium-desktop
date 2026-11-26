@@ -471,15 +471,14 @@ void BarPainter::DrawStatusBatteryIcon(ID2D1DeviceContext2* d2d, ID2D1Factory* f
         factory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(localLit, 0.035f * h, 0.035f * h), levelShape.put());
         const float bx = (stroke / 2 + bw) / 2;
         const winrt::com_ptr<ID2D1PathGeometry> bolt = BuildBatteryBoltGeometry(factory, bx, bh * 0.62f);
-        if (!bolt || !levelShape) {
-            if (levelShape) {
-                brush->SetColor(fill);
-                d2d->FillRoundedRectangle(D2D1::RoundedRect(lit, 0.035f * h, 0.035f * h), brush);
-            }
+        auto cut = bolt && levelShape ? CombineBatteryGeometry(factory, levelShape.get(), bolt.get()) : nullptr;
+        auto rest = bolt && levelShape ? CombineBatteryGeometry(factory, bolt.get(), levelShape.get()) : nullptr;
+        if (!cut || !rest) {
+            brush->SetColor(fill);
+            d2d->FillRoundedRectangle(D2D1::RoundedRect(lit, 0.035f * h, 0.035f * h), brush);
             return;
         }
-        StatusGeometryCache::BatteryEntry entry{
-            h, stroke, pct, CombineBatteryGeometry(factory, levelShape.get(), bolt.get()), CombineBatteryGeometry(factory, bolt.get(), levelShape.get()), 0};
+        StatusGeometryCache::BatteryEntry entry{h, stroke, pct, std::move(cut), std::move(rest), 0};
         constexpr size_t kMaxBatteryEntries = 16;
         if (entries.size() >= kMaxBatteryEntries) {
             auto victim = std::ranges::min_element(entries, [](const auto& a, const auto& b) { return a.lastUsed < b.lastUsed; });

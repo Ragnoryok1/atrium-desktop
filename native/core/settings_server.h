@@ -27,6 +27,7 @@ public:
     SettingsServer& operator=(const SettingsServer&) = delete;
 
     Settings Current();
+    Settings Saved();
     bool Ready() const { return ready_.load(); }
     // A change made by the core itself (e.g. pinning from the bar's menu):
     // applied to the saved settings and to the current preview, then written.

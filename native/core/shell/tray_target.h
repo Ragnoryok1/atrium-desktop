@@ -64,6 +64,12 @@ inline ResolvedTarget ResolveTarget(const TargetKey& request, const ShellSession
         return {static_cast<size_t>(-1), Resolution::Conflict};
     return result;
 }
+inline bool ShouldAllowExeForegroundFallback(bool allowProgramWake, bool hasTarget, Resolution reason)
+{
+    if (allowProgramWake)
+        return true;
+    return hasTarget && reason != Resolution::ShellChanged && reason != Resolution::Ambiguous && reason != Resolution::Conflict;
+}
 inline bool SameGestureTarget(const TargetKey& a, const TargetKey& b)
 {
     if (!a.shell.Valid() || a.shell != b.shell || a.exe != b.exe || a.identity != b.identity)

@@ -451,8 +451,8 @@ HRESULT PointerRightClick(IUIAutomation* uia, const tray_detail::Found& target, 
     return result == tray::PointerClick::Sent ? S_OK : result == tray::PointerClick::Cancelled ? E_ABORT : E_FAIL;
 }
 
-tray_detail::Found* ResolveClickTarget(const TrayIcon& icon, const tray::ShellSession& session, std::vector<tray_detail::Found>& buttons,
-                                       const std::vector<int>& match, const std::vector<tray_detail::Record>& records)
+tray::ResolvedTarget ResolveClickTarget(const TrayIcon& icon, const tray::ShellSession& session, std::vector<tray_detail::Found>& buttons,
+                                        const std::vector<int>& match, const std::vector<tray_detail::Record>& records)
 {
     std::vector<tray::TargetKey> candidates;
     candidates.reserve(buttons.size());
@@ -461,7 +461,7 @@ tray_detail::Found* ResolveClickTarget(const TrayIcon& icon, const tray::ShellSe
     const auto resolved = tray::ResolveTarget(icon.ActionTarget(), tray_detail::ReadShellSession(), candidates);
     Log(L"tray: click resolve=%s shellPid=%lu shellStarted=%llu shellWindow=%llu", tray::ResolutionName(resolved.reason), DWORD(session.pid), session.started,
         session.window);
-    return resolved.index == tray::kNone ? nullptr : &buttons[resolved.index];
+    return resolved;
 }
 
 bool ObserveTrayResponse(const std::wstring& exe, tray::Action action, const ResponseState& before, bool accepted, HANDLE stopEvent)
@@ -625,7 +625,7 @@ void TrayModel::EnqueueUrgent(Job job)
     cv_.notify_all();
 }
 
-bool TrayModel::ClickHosted(const TrayIcon& icon, tray::HostAction hostAction, RECT cell)
+bool TrayModel::ClickHosted(const TrayIcon& icon, tray::HostAction hostAction, RECT cell, bool allowProgramWake)
 {
     if (icon.hostKey.empty())
         return false;
@@ -655,7 +655,7 @@ bool TrayModel::ClickHosted(const TrayIcon& icon, tray::HostAction hostAction, R
         fallback.recordId = icon.recordId;
         fallback.shell = icon.shell;
     }
-    EnqueueUrgent({false, std::move(fallback), action});
+    EnqueueUrgent({false, std::move(fallback), action, false, allowProgramWake});
     return true;
 }
 
@@ -690,7 +690,7 @@ bool TrayModel::OpenExisting(const std::wstring& exe, DWORD preferredPid)
             chosen = &icon;
     }
     if (chosen)
-        return ClickHosted(*chosen, tray::HostAction::Open) || (Click(*chosen, false), true);
+        return ClickHosted(*chosen, tray::HostAction::Open, {}, true) || (EnqueueUrgent({false, *chosen, tray::Action::Left, false, true}), true);
     std::wstring lowerExe = exe;
     LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_LOWERCASE, lowerExe.c_str(), int(lowerExe.size()), lowerExe.data(), int(lowerExe.size()), nullptr, nullptr, 0);
     std::wstring fileName = PathFindFileNameW(lowerExe.c_str());
@@ -703,7 +703,7 @@ bool TrayModel::OpenExisting(const std::wstring& exe, DWORD preferredPid)
             icon = t;
             break;
         }
-    return ClickHosted(icon, tray::HostAction::Open) || (Click(icon, false), true);
+    return ClickHosted(icon, tray::HostAction::Open, {}, true) || (EnqueueUrgent({false, icon, tray::Action::Left, false, true}), true);
 }
 
 void TrayModel::RunClickJob(IUIAutomation* uia, const Job& job, const tray::ShellSession& initialSession, ULONGLONG findStart)
@@ -712,11 +712,13 @@ void TrayModel::RunClickJob(IUIAutomation* uia, const Job& job, const tray::Shel
     bool available = false, ordered = false;
     std::vector<tray_detail::Record> records;
     std::vector<tray_detail::Found> buttons;
+    tray::ResolvedTarget resolved;
     const auto appNames = appNames_ ? appNames_() : std::vector<PinnedApp>{};
     auto acquire = [&]() {
         buttons = tray_detail::FindButtons(uia, available);
         auto match = tray_detail::MatchButtons(buttons, records, ordered, appNames);
-        return ResolveClickTarget(job.icon, session, buttons, match, records);
+        resolved = ResolveClickTarget(job.icon, session, buttons, match, records);
+        return resolved.index == tray::kNone ? nullptr : &buttons[resolved.index];
     };
     tray_detail::Found* target = acquire();
     LogClickBegin(job.action, job.icon, target);
@@ -748,7 +750,8 @@ void TrayModel::RunClickJob(IUIAutomation* uia, const Job& job, const tray::Shel
         return;
     }
     bool observed = result.outcome == tray::Outcome::Observed;
-    if (!observed && job.action != tray::Action::Right && !job.icon.exe.empty() && !tray::IsShellExplorerExe(job.icon.exe))
+    if (!observed && job.action != tray::Action::Right && !job.icon.exe.empty() && !tray::IsShellExplorerExe(job.icon.exe) &&
+        tray::ShouldAllowExeForegroundFallback(job.allowProgramWake, target != nullptr, resolved.reason))
         observed = ForegroundExisting(job.icon.exe, stopEvent_), Log(L"tray: click foreground-existing observed=%d", observed);
     const bool shown = !observed && tray_detail::ShowOverflow(uia, stopEvent_);
     Log(L"tray: click end result=%s elapsed=%llu ms", observed ? L"observed" : shown ? L"system-tray" : L"needs-user", GetTickCount64() - findStart);

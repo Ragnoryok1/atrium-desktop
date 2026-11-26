@@ -156,7 +156,7 @@ bool ShouldSyncStartupOnLaunch(bool development, bool registeredNow, bool startO
 
 StartupPlan PlanStartupChange(const StartupState& state, bool enabled, StartupMode mode)
 {
-    if (state.exe.empty())
+    if (state.exe.empty() || !state.taskReadOk)
         return {};
     const std::wstring command = L"\"" + state.exe + L"\"";
     const bool ownTask = !state.taskProgram.empty() && _wcsicmp(state.taskProgram.c_str(), state.exe.c_str()) == 0;
@@ -181,17 +181,28 @@ StartupPlan PlanStartupChange(const StartupState& state, bool enabled, StartupMo
             .createTask = false};
 }
 
-std::wstring LogonTaskProgram()
+namespace {
+struct TaskQuery {
+    std::wstring program;
+    bool readOk = false;
+};
+
+TaskQuery QueryLogonTask()
 {
     ComScope com;
     const std::wstring sid = UserSid();
     auto folder = sid.empty() ? nullptr : RootFolder();
+    if (!folder)
+        return {};
     winrt::com_ptr<IRegisteredTask> task;
+    const HRESULT hr = folder->GetTask(Bstr(TaskName(sid)).b, task.put());
+    if (hr == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND) || hr == HRESULT_FROM_WIN32(ERROR_PATH_NOT_FOUND))
+        return {{}, true};
     winrt::com_ptr<ITaskDefinition> definition;
     winrt::com_ptr<IActionCollection> actions;
     winrt::com_ptr<IAction> action;
-    if (!folder || FAILED(folder->GetTask(Bstr(TaskName(sid)).b, task.put())) || FAILED(task->get_Definition(definition.put())) ||
-        FAILED(definition->get_Actions(actions.put())) || FAILED(actions->get_Item(1, action.put())))
+    if (FAILED(hr) || !task || FAILED(task->get_Definition(definition.put())) || FAILED(definition->get_Actions(actions.put())) ||
+        FAILED(actions->get_Item(1, action.put())))
         return {};
     auto exec = action.try_as<IExecAction>();
     BSTR path = nullptr;
@@ -201,8 +212,11 @@ std::wstring LogonTaskProgram()
     SysFreeString(path);
     if (result.size() >= 2 && result.front() == L'"' && result.back() == L'"')
         result = result.substr(1, result.size() - 2);
-    return result;
+    return {std::move(result), true};
 }
+} // namespace
+
+std::wstring LogonTaskProgram() { return QueryLogonTask().program; }
 
 bool RemoveLogonTask()
 {
@@ -232,12 +246,14 @@ bool UpdateLogonTask(bool startOnLogin, StartupMode mode)
     wchar_t current[32771]{};
     DWORD size = sizeof(current);
     LSTATUS read = RegGetValueW(HKEY_CURRENT_USER, kRunKey, L"Atrium", RRF_RT_REG_SZ, nullptr, current, &size);
+    const TaskQuery taskQuery = QueryLogonTask();
     const StartupState state{
         .exe = exe,
-        .taskProgram = LogonTaskProgram(),
+        .taskProgram = taskQuery.program,
         .runValue = read == ERROR_SUCCESS ? current : std::wstring{},
         .hasRunValue = read == ERROR_SUCCESS,
         .runReadOk = read == ERROR_SUCCESS || read == ERROR_FILE_NOT_FOUND || read == ERROR_PATH_NOT_FOUND,
+        .taskReadOk = taskQuery.readOk,
     };
     const StartupPlan plan = PlanStartupChange(state, startOnLogin, mode);
     if (!plan.ok) {
