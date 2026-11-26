@@ -18,9 +18,7 @@
 #include <tlhelp32.h>
 #include <uiautomation.h>
 #include <wincodec.h>
-
 #include <winrt/base.h>
-
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -290,37 +288,46 @@ std::map<std::wstring, Program> RunningPrograms()
     return out;
 }
 
-// Whether one of a program's windows has the tray icon `uid` now (the shell
-// knows the icon's place; it fails for icons that are not there).
-bool HasIcon(const std::vector<HWND>& windows, UINT uid, RECT& bounds, std::wstring& identity, ShellProbe& probe)
+bool HasIcon(const std::vector<HWND>& windows, UINT uid, RECT& bounds, std::wstring& identity, ShellProbe& probe, std::set<std::pair<HWND, UINT>>& claimed)
 {
     for (HWND h : windows) {
         if (!probe.responsive)
             return false;
         NOTIFYICONIDENTIFIER id{sizeof(id), h, uid, GUID_NULL};
         RECT r{};
-        if (SUCCEEDED(ShellNotifyIconRect(id, r, probe))) {
-            bounds = r;
-            DWORD pid = 0;
-            GetWindowThreadProcessId(h, &pid);
-            identity = L"uid:" + std::to_wstring(pid) + L":" + std::to_wstring(reinterpret_cast<uintptr_t>(h)) + L":" + std::to_wstring(uid);
-            return true;
-        }
+        if (claimed.contains({h, uid}) || FAILED(ShellNotifyIconRect(id, r, probe)))
+            continue;
+        bounds = r;
+        DWORD pid = 0;
+        GetWindowThreadProcessId(h, &pid);
+        identity = L"uid:" + std::to_wstring(pid) + L":" + std::to_wstring(reinterpret_cast<uintptr_t>(h)) + L":" + std::to_wstring(uid);
+        return claimed.emplace(h, uid), true;
     }
     return false;
 }
 
-bool LiveIcon(const Record& record, const Program& program, RECT& bounds, std::wstring& identity, ShellProbe& probe)
+const Program* ProbeLiveIcon(const Record& record, const std::map<std::wstring, Program>& running, RECT& bounds, std::wstring& identity, ShellProbe& probe,
+                             std::set<std::pair<HWND, UINT>>& claimed)
 {
-    if (record.guid == GUID_NULL)
-        return record.hasUid && HasIcon(program.windows, record.uid, bounds, identity, probe);
-    NOTIFYICONIDENTIFIER id{sizeof(id), nullptr, 0, record.guid};
-    if (FAILED(ShellNotifyIconRect(id, bounds, probe)))
-        return false;
-    wchar_t guid[40]{};
-    StringFromGUID2(record.guid, guid, 40);
-    identity = L"guid:" + std::wstring(guid); // liveness only, NOT process ownership
-    return true;
+    static const Program kEmpty;
+    const auto exact = running.find(record.exe);
+    const Program& primary = exact == running.end() ? kEmpty : exact->second;
+    if (record.guid != GUID_NULL) {
+        NOTIFYICONIDENTIFIER id{sizeof(id), nullptr, 0, record.guid};
+        wchar_t guid[40]{};
+        if (FAILED(ShellNotifyIconRect(id, bounds, probe)) || !StringFromGUID2(record.guid, guid, 40))
+            return nullptr;
+        return (identity = L"guid:" + std::wstring(guid)), &primary; // liveness only, NOT process ownership
+    }
+    if (!record.hasUid)
+        return nullptr;
+    if (HasIcon(primary.windows, record.uid, bounds, identity, probe, claimed))
+        return &primary;
+    // Elevated/service-owned windows cannot expose full paths and are grouped under |<filename>.
+    const auto elevated = running.find(L"|" + Lower(PathFindFileNameW(record.exe.c_str())));
+    const bool present = elevated != running.end() && (GetFileAttributesW(record.exe.c_str()) != INVALID_FILE_ATTRIBUTES ||
+                                                       (GetLastError() != ERROR_FILE_NOT_FOUND && GetLastError() != ERROR_PATH_NOT_FOUND));
+    return present && HasIcon(elevated->second.windows, record.uid, bounds, identity, probe, claimed) ? &elevated->second : nullptr;
 }
 
 struct Found {
@@ -625,19 +632,16 @@ std::vector<int> MatchButtons(std::vector<Found>& buttons, std::vector<Record>& 
     for (const auto& b : buttons)
         bs.push_back({b.tip, b.promoted, rect(b.bounds)});
     std::vector<tray::Record> rs;
-    const Program empty;
     ShellProbe probe;
+    std::set<std::pair<HWND, UINT>> claimed;
     for (const auto& r : records) {
-        auto run = running.find(r.exe);
-        // A filename-only process result is not proof of a full executable path.
-        const Program& program = run == running.end() ? empty : run->second;
         tray::Record value{r.id, r.exe, r.tip, {}, false, r.promoted, r.order};
         RECT bounds{};
-        value.live = LiveIcon(r, program, bounds, value.identity, probe);
-        value.bounds = rect(bounds);
-        if (value.live) {
+        const Program* matched = ProbeLiveIcon(r, running, bounds, value.identity, probe, claimed);
+        value.live = matched != nullptr, value.bounds = rect(bounds);
+        if (matched) {
             const std::wstring guid = GuidString(r.guid);
-            FillRecordNames(r.exe, program, r.tip, guid.empty() ? r.id : guid, labels, version, value.names, value.firstTitle);
+            FillRecordNames(r.exe, *matched, r.tip, guid.empty() ? r.id : guid, labels, version, value.names, value.firstTitle);
         }
         rs.push_back(std::move(value));
     }
@@ -1077,11 +1081,8 @@ void LogTrayRefresh(bool changed, size_t iconCount, int recognised, bool ordered
 }
 
 } // namespace
-
 DWORD TrayModel::LastSyntheticInput() { return g_syntheticInput; }
-
 std::wstring TrayModel::Title(const std::wstring& tip) { return tray::Title(tip); }
-
 TrayModel::TrayModel(HWND notify, UINT msg, std::function<std::vector<PinnedApp>()> appNames)
     : notify_(notify),
       msg_(msg),
@@ -1089,7 +1090,6 @@ TrayModel::TrayModel(HWND notify, UINT msg, std::function<std::vector<PinnedApp>
       thread_([this] { Worker(); })
 {
 }
-
 TrayModel::~TrayModel()
 {
     {
@@ -1098,7 +1098,6 @@ TrayModel::~TrayModel()
     }
     cv_.notify_all(), thread_.join();
 }
-
 void TrayModel::Refresh()
 {
     std::lock_guard g(mutex_);
@@ -1106,7 +1105,6 @@ void TrayModel::Refresh()
         jobs_.push_back({true, {}});
     cv_.notify_all();
 }
-
 void TrayModel::SetHosting(bool on)
 {
     if (on == (host_ != nullptr))
@@ -1121,19 +1119,11 @@ void TrayModel::SetHosting(bool on)
     }
     host.reset(), PostMessageW(notify_, msg_, 0, 0), Refresh();
 }
-
-std::vector<std::wstring> TrayModel::Flashing() const
-{
-    std::lock_guard g(mutex_);
-    return host_ && !host_->Yielded() ? host_->Flashing() : std::vector<std::wstring>{};
-}
-
 void TrayModel::SetHostPlaces(RECT anchor)
 {
     if (host_)
         host_->SetPlaces(anchor);
 }
-
 void TrayModel::MiddleClick(const TrayIcon& icon, RECT cell)
 {
     POINT at{};
@@ -1184,7 +1174,6 @@ void TrayModel::Click(const TrayIcon& icon, bool right, RECT cell)
     if (!ClickHosted(icon, right ? tray::HostAction::Right : tray::HostAction::Left, cell))
         EnqueueUrgent({false, icon, right ? tray::Action::Right : tray::Action::Left});
 }
-
 void TrayModel::DoubleClick(const TrayIcon& icon, bool continuation, RECT cell)
 {
     if (!ClickHosted(icon, continuation ? tray::HostAction::DoubleContinuation : tray::HostAction::Double, cell))
@@ -1192,29 +1181,34 @@ void TrayModel::DoubleClick(const TrayIcon& icon, bool continuation, RECT cell)
 }
 void TrayModel::OpenSystemTray() { EnqueueUrgent({false, {}, tray::Action::Left, true}); }
 
-bool TrayModel::OpenExisting(const std::wstring& exe)
+bool TrayModel::OpenExisting(const std::wstring& exe, DWORD preferredPid)
 {
     if (exe.empty())
         return false;
-    for (const TrayIcon& icon : Icons()) {
-        if (!icon.exe.empty() && _wcsicmp(AppExecutable(icon.exe).c_str(), exe.c_str()) == 0) {
-            if (!ClickHosted(icon, tray::HostAction::Open))
-                Click(icon, false);
-            return true;
+    const std::vector<TrayIcon> current = Icons();
+    const TrayIcon* chosen = nullptr;
+    for (const TrayIcon& icon : current) {
+        if (icon.exe.empty() || _wcsicmp(AppExecutable(icon.exe).c_str(), exe.c_str()) != 0)
+            continue;
+        if (preferredPid && icon.pid == preferredPid) {
+            chosen = &icon;
+            break;
         }
+        if (!chosen || (!chosen->flashing && icon.flashing))
+            chosen = &icon;
     }
+    if (chosen)
+        return ClickHosted(*chosen, tray::HostAction::Open) || (Click(*chosen, false), true);
     if (MessengerOfProgram(Lower(PathFindFileNameW(exe.c_str()))) == Messenger::None || !detail::ProcessRuns(exe))
         return false;
     TrayIcon icon;
     icon.exe = Lower(exe);
-    for (const TrayIcon& t : Icons())
+    for (const TrayIcon& t : current)
         if (t.exe == icon.exe) {
             icon = t;
             break;
         }
-    if (!ClickHosted(icon, tray::HostAction::Open))
-        Click(icon, false);
-    return true;
+    return ClickHosted(icon, tray::HostAction::Open) || (Click(icon, false), true);
 }
 
 std::vector<TrayIcon> TrayModel::Icons() const

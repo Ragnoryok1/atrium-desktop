@@ -182,8 +182,18 @@ bool ParseLinkStrings(const BYTE* data, size_t size, LinkStrings& out)
         } else {
             if (at + count > size)
                 return false;
-            for (uint16_t i = 0; i < count; ++i)
-                into.push_back(wchar_t(data[at + i]));
+            if (count > 0) {
+                const char* src = reinterpret_cast<const char*>(data + at);
+                const int need = MultiByteToWideChar(CP_ACP, 0, src, int(count), nullptr, 0);
+                if (need > 0) {
+                    into.resize(size_t(need));
+                    MultiByteToWideChar(CP_ACP, 0, src, int(count), into.data(), need);
+                } else {
+                    into.clear();
+                }
+            } else {
+                into.clear();
+            }
             at += count;
         }
         return true;

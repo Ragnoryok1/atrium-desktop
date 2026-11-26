@@ -676,6 +676,17 @@ std::vector<std::wstring> TrayHost::Flashing() const
     return out;
 }
 
+std::vector<FlashingTrayIcon> TrayHost::FlashingIcons() const
+{
+    std::lock_guard g(mutex_);
+    std::vector<FlashingTrayIcon> out;
+    const ULONGLONG now = GetTickCount64();
+    for (const auto& [key, icon] : icons_)
+        if (icon.flash.until > now && (!icon.exe.empty() || icon.pid != 0))
+            out.push_back({key, icon.exe, icon.tip, icon.pid, icon.hwnd});
+    return out;
+}
+
 void TrayHost::Hover(const std::wstring& key, POINT at, RECT cell)
 {
     HWND w = window_.load();

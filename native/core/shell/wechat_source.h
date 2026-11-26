@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <utility>
@@ -102,6 +103,13 @@ public:
     }
     // The chat list reads (a shown window's, or the rows held from it).
     bool Reading() const { return reading_; }
+    bool ReadingPid(DWORD pid) const
+    {
+        if (pid == 0)
+            return reading_;
+        std::lock_guard lock(readingMu_);
+        return readingPids_.contains(pid);
+    }
     int Unread() const { return unread_; }
     // wechatBlockOfficial: no cards or badge count for the official accounts' rows.
     void SetBlockOfficial(bool on)
@@ -110,7 +118,7 @@ public:
             SetEvent(wake_);
     }
     void SetPostCards(bool on) { postCards_ = on; }
-    void OpenChat(const std::wstring& chat);
+    void OpenChat(const std::wstring& chat, DWORD pid = 0);
 
 private:
     void Run();
@@ -123,19 +131,24 @@ private:
     std::atomic<bool> postCards_{true};
     std::atomic<int> unread_{0};
     std::atomic<bool> wakePending_{false};
+    mutable std::mutex readingMu_;
+    std::set<DWORD> readingPids_;
     std::mutex openMu_;
     std::wstring pendingOpenChat_;
+    DWORD pendingOpenPid_ = 0;
     HANDLE wake_ = nullptr;
     std::thread thread_;
 };
 
 namespace detail {
+WeChatBusyState QueryWeChatBusyStateForPid(DWORD pid);
 WeChatBusyState QueryWeChatBusyState(const std::vector<std::pair<DWORD, std::wstring>>& procs);
 bool ShouldReadWeChatWindow(HWND h, DWORD pid, bool* hung = nullptr);
 std::vector<HWND> WeChatWindows(DWORD pid, bool& anyHung);
 void DiscoverWeChatProcesses(std::vector<std::pair<DWORD, std::wstring>>& procs);
 void HandlePendingWeChatOpen(IUIAutomation* uia, IUIAutomationCondition* cells, HANDLE wake, const std::atomic<bool>& stop, std::mutex& openMu,
-                             std::wstring& pendingOpenChat, std::vector<std::pair<DWORD, std::wstring>>& procs, HWND& lastMainHwnd, uint32_t& loggedMask);
+                             std::wstring& pendingOpenChat, DWORD& pendingOpenPid, std::vector<std::pair<DWORD, std::wstring>>& procs,
+                             std::map<DWORD, HWND>& lastMainByPid, uint32_t& loggedMask);
 } // namespace detail
 
 } // namespace atrium

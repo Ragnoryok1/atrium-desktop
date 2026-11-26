@@ -37,12 +37,13 @@
 | `showDesktop` | bool | | false | 任务栏最右端的“显示桌面”：一条与分隔线同样的细线，点击等同 Win+D（再点一次恢复窗口） |
 | `textColor` | string | `auto` / `light` / `dark` | `auto` | 文字颜色；`auto` 按玻璃下方的实际亮度选择 |
 | `language` | string | `auto` / `zh-Hans` / `en` / locale tag | `auto` | 界面语言：`auto` 跟随 Windows 的显示语言（中文 → 简体中文，其余 → English）；`zh-Hans` 简体中文；`en` English；其他值对应 `locales/<tag>.json`。旧配置的 `zh` 视为 `zh-Hans`。任务栏、开始菜单、控制中心、通知、桌面小组件与设置中心一起切换，保存后立即生效 |
+| `barDodge` | bool | | false | 常驻（`never`）或全屏时隐藏（`fullscreen`）下开启：有普通窗口与任务栏区域重叠时自动滑出让开，指针移到屏幕边缘即可唤出；旧配置里的 `"autoHide": "dodge"` 会按此项迁移 |
 | `barReserve` | bool | | true | 仅常驻（`autoHide` 为 `never`）时：为窗口留出位置，栏占住屏幕边缘的一条（应用栏），最大化的窗口停在它前面；关闭时最大化窗口铺满全屏，栏浮在窗口上方 |
 | `barFullscreenHide` | bool | | true | 仅常驻时：全屏应用（全屏视频、F11）在前时栏让开，退出全屏后回来；最大化的窗口不算全屏。全屏游戏无论如何都会让开 |
-| `autoHide` | string | `never` / `fullscreen` / `always` | `fullscreen` | 栏的显示方式：常驻；全屏时隐藏（有最大化、全屏或分屏铺满屏幕的窗口时滑出屏幕，前面再开小窗口也不出来）；一直隐藏。隐藏时，指针移到栏下方的屏幕底边栏就出现，离开后收回 |
+| `autoHide` | string | `never` / `fullscreen` / `always` | `fullscreen` | 栏的显示方式：常驻、全屏时隐藏（有最大化、全屏或分屏铺满屏幕的窗口时滑出屏幕，前面再开小窗口也不出来）、一直隐藏。隐藏时，指针移到栏下方的屏幕底边栏就出现，离开后收回 |
 | `barEdge` | string | `bottom` / `top` / `left` / `right` | `bottom` | 栏停靠的屏幕边缘：底部、顶部、左侧或右侧；其他值视为 `bottom` |
 | `statusStyle` | string | `ring` / `icons` | `ring` | 状态栏的样子：Wi-Fi 外面一圈电量或音量的圆环；或者像 Windows 任务栏那样并排的网络、音量、电池三个图标（自绘，跟随字色）。点按都打开控制中心 |
-| `controlModules` | string[] | `stage` / `energysaver` / `darkmode` / `hotspot` | `["stage"]` | 控制中心的可选模块，按顺序排在投屏下面、亮度上面：台前调度、节电模式、深色模式（切换 Windows 和应用的深色/浅色主题）、移动热点，每个是一块带开关的玻璃（两块一行，单出来的一块占整行）；未知项和重复项丢弃；旧的 `nightlight`（夜间模式）读作 `darkmode`。Wi-Fi、蓝牙、电池、投屏、亮度和声音固定显示，不在此列 |
+| `controlModules` | string[] | `stage` / `energysaver` / `darkmode` / `hotspot` / `dnd` / `airplane` | `["stage"]` | 控制中心的可选模块，按顺序排在投屏下面、亮度上面：台前调度、节电模式、深色模式（切换 Windows 和应用的深色/浅色主题）、移动热点、勿扰模式、飞行模式，每个是一块带开关的玻璃（两块一行，单出来的一块占整行）；未知项和重复项丢弃；旧的 `nightlight`（夜间模式）读作 `darkmode`。Wi-Fi、蓝牙、电池、投屏、亮度和声音固定显示，不在此列 |
 | `iconSize` | number | 16–64 DIP | 30 | 任务栏图标边长 |
 | `magnify` | number | 1–2 | 1.7 | 悬停放大：指针下图标的缩放倍数，相邻图标按波形放大；1 为关闭 |
 | `hoverRise` | bool | | false | 形状页的“跟随鼠标拱起”：背景随鼠标局部向上延伸，幅度复用 `magnify`；关闭后保持图标放大。默认关闭，旧配置没有这一项时也是关闭 |
@@ -127,13 +128,14 @@
 ## 管道
 
 - 名称：`\\.\pipe\Atrium.Core.<会话 ID>`；消息模式；拒绝远程客户端；Core 以 `FILE_FLAG_FIRST_PIPE_INSTANCE` 创建，其他进程无法预先占用名称。
-- DACL：使用当前进程令牌的 `TokenUser` SID 构建 `D:P(A;;GA;;;<userSid>)(A;;GA;;;SY)(A;;GA;;;BA)` 安全描述符，使同一 Windows 用户的普通与提权 `Atrium.Settings.exe` 均可连接，并隔离其他本地用户。
+- DACL：使用当前进程令牌的 `TokenUser` SID 构建 `D:P(A;;GA;;;<userSid>)(A;;GA;;;SY)(A;;GA;;;BA)` 安全描述符；以管理员身份（高完整性）运行时附加 `S:(ML;;NW;;;ME)` 标签，使同一 Windows 用户的普通与提权 `Atrium.Settings.exe` 均可连接，同时隔离其他本地用户与低完整性进程。
 - Settings 连接后用 `GetNamedPipeServerProcessId` 核对对端的完整可执行路径，必须对应本分发目录的 Atrium.exe。不同安装位置不共用设置连接；另一实例已运行时明确提示，仍不支持两套任务栏并行。管道名称沿用内部标识 Atrium.Core。
 - 同一时间只服务一个客户端。每条请求是一个 UTF-8 JSON 消息，对应一条回复。
 
 | 请求 | 回复 | 行为 |
 | --- | --- | --- |
-| `{"op":"get"}` | `{"op":"state","protocol":1,"instanceId":"…","revision":1,"saved":{…},"current":{…},"path":"…"}` | 已保存值与当前生效值（可能含未保存预览）、核心实例标识 `instanceId` 与单调修订号 `revision`（从 1 起，每次 Core 自身修改或 `commit` 成功落盘后递增） |
+| `{"op":"get"}` | `{"op":"state","protocol":1,"instanceId":"…","revision":1,"elevated":false,"saved":{…},"current":{…},"path":"…"}` | 已保存值与当前生效值（可能含未保存预览）、核心实例标识 `instanceId`、单调修订号 `revision`（从 1 起，每次 Core 自身修改或 `commit` 成功落盘后递增）以及当前核心是否以管理员权限运行（`elevated`） |
+| `{"op":"quit"}` | `{"op":"ok"}` 或 `{"op":"error","message":…}` | 请核心退出（供普通权限设置窗口请求高权限核心退出时使用） |
 | `{"op":"preview","settings":{…}}` | `{"op":"ok"}` | 只改内存，立即重绘；可只发部分键 |
 | `{"op":"commit","instanceId":"…","expectedRevision":1,"settings":{…}}` | `{"op":"ok","instanceId":"…","revision":2,"warning":…}`（`warning` 可省）、`{"op":"conflict","instanceId":"…","revision":2,"saved":{…},"current":{…},"message":"settings changed since last read"}` 或 `{"op":"error","message":…}` | 仅当请求中的 `instanceId` 与 `expectedRevision`（若有）均与当前服务端一致时才写盘并递增 `revision`；否则拒绝覆盖并返回 `conflict` 与最新快照（旧客户端不带这两个字段时保持兼容）。文件已保存但自启修改失败时仍返回 `ok` 与 `warning`，界面接受保存快照并显示警告 |
 | `{"op":"cancel"}` | `{"op":"ok"}` | 恢复到已保存值 |
@@ -155,6 +157,7 @@ Core 未运行时，Settings 直接读写设置文件，Core 下次启动生效�
 | --- | --- |
 | （无） | 启动；若已在运行，则打开设置窗口 |
 | `--exit` | 请正在运行的实例退出，最多等 10 秒（安装、升级用） |
+| `--replace` | 启动时若同一目录已有实例在运行，先请求其退出并接管（如重启为管理员权限时使用） |
 | `--development` / development.txt | 显式开发身份：不注册正式卸载项、快捷方式或 Windows 自启。本地 CMake / dotnet 构建默认也是开发身份；tools/build.ps1 -Development 输出至 dist/Development/Atrium，正式打包显式关闭开发编译标记 |
 | `--ready-event <name>` | 更新启动握手；核心在 UI 消息循环和管道就绪后确认，设置中心在窗口加载后确认；更新保持核心运行时，设置中心还必须成功读取对应核心的 state |
 | `--debug-capturable` | 仅开发：不排除捕获并冻结背景，用于截取真实画面 |

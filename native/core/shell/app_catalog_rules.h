@@ -44,13 +44,80 @@ inline bool HasCatalogWordToken(std::wstring_view foldedText, std::wstring_view 
 }
 
 inline constexpr const wchar_t* kCatalogMakers[] = {
-    L"nvidia",  L"intel", L"realtek", L"dolby",      L"lenovo",    L"dell",        L"hp inc",
-    L"hewlett", L"asus",  L"acer",    L"micro-star", L"synaptics", L"waves audio", L"elan",
+    L"nvidia",
+    L"intel",
+    L"amd",
+    L"advanced micro devices",
+    L"radeon",
+    L"realtek",
+    L"dolby",
+    L"lenovo",
+    L"dell",
+    L"hp inc",
+    L"hp",
+    L"hewlett",
+    L"asus",
+    L"asustek",
+    L"acer",
+    L"msi",
+    L"micro-star",
+    L"gigabyte",
+    L"qualcomm",
+    L"nahimic",
+    L"a-volute",
+    L"killer",
+    L"rivet networks",
+    L"mediatek",
+    L"broadcom",
+    L"conexant",
+    L"dts",
+    L"creative",
+    L"thx",
+    L"synaptics",
+    L"waves audio",
+    L"elan",
 };
 
 inline bool CatalogByMaker(const std::wstring& folded)
 {
     return std::ranges::any_of(kCatalogMakers, [&](const wchar_t* maker) { return HasCatalogWordToken(folded, maker); });
+}
+
+inline bool IsVisualStudioInstallerApp(const std::wstring& foldedId, const std::wstring& foldedTarget)
+{
+    return foldedId == L"microsoft.visualstudio.installer" || foldedTarget.find(L"\\microsoft visual studio\\installer\\") != std::wstring::npos;
+}
+
+inline bool IsBuiltInMicrosoftApp(const std::wstring& foldedId, const std::wstring& foldedAumid)
+{
+    const std::wstring& id = !foldedAumid.empty() ? foldedAumid : foldedId;
+    if (id.empty())
+        return false;
+    for (const wchar_t* exact : {L"msedge", L"microsoft.skydrive.desktop", L"microsoft.office.onenote.memorypreview", L"microsoft.windows.explorer"})
+        if (id == exact)
+            return true;
+    constexpr const wchar_t* kPackages[] = {
+        L"windows.immersivecontrolpanel_",
+        L"microsoft.windowsnotepad_",
+        L"microsoft.windowscalculator_",
+        L"microsoft.paint_",
+        L"microsoft.screensketch_",
+        L"microsoft.windows.photos_",
+        L"microsoft.onedrive.photos_",
+        L"microsoft.zunemusic_",
+        L"microsoft.zunevideo_",
+        L"microsoft.windowsterminal_",
+        L"microsoft.microsoftstickynotes_",
+        L"microsoft.microsoftjournal_",
+        L"microsoft.todos_",
+        L"microsoft.whiteboard_",
+        L"clipchamp.clipchamp_",
+        L"microsoft.windowsstore_",
+        L"microsoft.outlookforwindows_",
+        L"microsoft.gamingapp_",
+        L"microsoft.windowscommunicationsapps_",
+    };
+    return std::ranges::any_of(kPackages, [&](const wchar_t* prefix) { return id.starts_with(prefix); });
 }
 
 inline bool CatalogNameExcluded(const std::wstring& foldedName)
@@ -74,7 +141,21 @@ inline std::wstring NormalizeCatalogArgs(const std::wstring& args)
     if (first == std::wstring::npos)
         return {};
     const size_t last = args.find_last_not_of(L" \t\r\n");
-    return FoldCatalogText(args.substr(first, last - first + 1));
+    std::wstring folded = FoldCatalogText(args.substr(first, last - first + 1));
+    // Desktop and Start Menu Chrome/Edge/Electron shortcuts often differ only in --source-shortcut-location=*.
+    constexpr std::wstring_view kSourceFlag = L"--source-shortcut-location=";
+    for (size_t pos = folded.find(kSourceFlag); pos != std::wstring::npos; pos = folded.find(kSourceFlag, pos)) {
+        size_t end = folded.find_first_of(L" \t\r\n", pos);
+        if (end == std::wstring::npos)
+            folded.erase(pos);
+        else
+            folded.erase(pos, end - pos);
+    }
+    const size_t cleanFirst = folded.find_first_not_of(L" \t\r\n");
+    if (cleanFirst == std::wstring::npos)
+        return {};
+    const size_t cleanLast = folded.find_last_not_of(L" \t\r\n");
+    return folded.substr(cleanFirst, cleanLast - cleanFirst + 1);
 }
 
 inline bool IsCatalogDrivePath(const std::wstring& id) { return id.size() > 2 && id[1] == L':' && (id[2] == L'\\' || id[2] == L'/'); }

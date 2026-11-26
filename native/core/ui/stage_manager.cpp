@@ -8,7 +8,6 @@
 
 #include <dwmapi.h>
 #include <windowsx.h>
-
 #include <winrt/Windows.Data.Json.h>
 #include <winrt/Windows.Foundation.Collections.h>
 
@@ -18,11 +17,8 @@
 #include <cmath>
 #include <ranges>
 #include <thread>
-
 namespace json = winrt::Windows::Data::Json;
-
 namespace atrium {
-
 namespace {
 
 // DIP. Each set of windows stands in a box kBoxW x kBoxH, kEdge from the screen's edge, the boxes one
@@ -396,6 +392,10 @@ void StageManager::Update(const std::vector<TaskItem>& items)
         const bool rootHere = std::ranges::find(t.windows, root) != t.windows.end();
         const TaskItem base{L"", t.name, t.pinned, t.pinIndex, {}, false, t.attention, t.badge, t.iconVersion, false};
         for (HWND h : t.windows) {
+            if (IsHigherIntegrity(h, t.key)) {
+                excludedWindows_.push_back(h);
+                continue;
+            }
             TaskItem w = base;
             w.key = WindowKey(t.key, h);
             w.windows.push_back(h);
@@ -591,7 +591,6 @@ void StageManager::PutDown(HWND window, bool fly)
         ShowWindowAsync(window, SW_SHOWMINNOACTIVE);
         return;
     }
-    ShowWindowAsync(window, SW_SHOWMINNOACTIVE);
     std::erase_if(flights_, [&](const Flight& f) { return f.window == window; });
     Flight f;
     f.window = window;
@@ -602,6 +601,7 @@ void StageManager::PutDown(HWND window, bool fly)
     SetLarge(f);
     flights_.push_back(std::move(f));
     Launch();
+    ShowWindowAsync(window, SW_SHOWMINNOACTIVE);
     surface_.Invalidate();
 }
 

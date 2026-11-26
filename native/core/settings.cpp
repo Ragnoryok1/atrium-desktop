@@ -127,6 +127,7 @@ void ReadModuleSettingsJson(const json::JsonObject& o, Settings& s)
     flag(L"hideTaskbar", s.hideTaskbar);
     flag(L"genieMinimize", s.genieMinimize);
     flag(L"windowPeek", s.windowPeek);
+    flag(L"barDodge", s.barDodge);
     flag(L"barReserve", s.barReserve);
     flag(L"barFullscreenHide", s.barFullscreenHide);
     flag(L"hideBanners", s.hideBanners);
@@ -391,6 +392,7 @@ void WriteSystemJson(const json::JsonObject& o, const Settings& s)
     flag(L"hideTaskbar", s.hideTaskbar);
     flag(L"genieMinimize", s.genieMinimize);
     flag(L"windowPeek", s.windowPeek);
+    flag(L"barDodge", s.barDodge);
     flag(L"barReserve", s.barReserve);
     flag(L"barFullscreenHide", s.barFullscreenHide);
     flag(L"hideBanners", s.hideBanners);
@@ -530,8 +532,11 @@ bool Settings::FromJson(const std::wstring& text, const Settings& base, Settings
         s.language = std::wstring(o.GetNamedString(L"language"));
     if (o.HasKey(L"textColor") && o.GetNamedValue(L"textColor").ValueType() == json::JsonValueType::String)
         s.textColor = std::wstring(o.GetNamedString(L"textColor"));
-    if (o.HasKey(L"autoHide") && o.GetNamedValue(L"autoHide").ValueType() == json::JsonValueType::String)
+    if (o.HasKey(L"autoHide") && o.GetNamedValue(L"autoHide").ValueType() == json::JsonValueType::String) {
         s.autoHide = std::wstring(o.GetNamedString(L"autoHide"));
+        if (s.autoHide == L"dodge" && !o.HasKey(L"barDodge"))
+            s.barDodge = true;
+    }
     if (o.HasKey(L"barEdge") && o.GetNamedValue(L"barEdge").ValueType() == json::JsonValueType::String)
         s.barEdge = std::wstring(o.GetNamedString(L"barEdge"));
     if (o.HasKey(L"statusStyle") && o.GetNamedValue(L"statusStyle").ValueType() == json::JsonValueType::String)

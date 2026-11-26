@@ -82,9 +82,9 @@ public:
     // The path a pinned item was pinned from (a shortcut when that is what was
     // pinned): the shell's menus and AppUserModelID live there, not on the exe.
     std::wstring PinTarget(const std::wstring& key) const;
-    // Brings the group's most recent window to the front (never minimizes or
-    // launches); used while files are dragged over the item.
-    void Show(const std::wstring& key);
+    // Brings a window of the group to the front (never minimizes or launches);
+    // when `pid` is non-zero, targets that specific instance. Returns true if one was shown.
+    bool Show(const std::wstring& key, DWORD pid = 0);
     // Moves a running unpinned group to `toIndex` among the unpinned groups.
     void MoveRunning(const std::wstring& key, int toIndex);
     // Files dropped on an item: open them with that app.

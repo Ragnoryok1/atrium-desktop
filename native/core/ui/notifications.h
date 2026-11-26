@@ -44,6 +44,8 @@ public:
     bool CenterVisible() const { return center_.surface && center_.surface->Visible(); }
     void Clear();
     void SetOptions(double timeoutSeconds, bool hideBody, const std::wstring& placement, bool notifyFullscreen = false, bool notifyAlways = false);
+    void SetDoNotDisturb(bool on);
+    bool DoNotDisturb() const { return dnd_; }
     // Corner radius (DIP), the bar's; the cards are concentric with it.
     void SetRadius(float dip);
     int Unread() const;
@@ -142,6 +144,7 @@ private:
     bool always_ = false;
     bool hideBody_ = false;
     bool notifyFullscreen_ = false;
+    bool dnd_ = false;
     bool corner_ = false, left_ = false, bottom_ = false; // notifyPlacement: a corner of the main screen
     BarEdge barEdge_ = BarEdge::Bottom;
     ULONGLONG centerClosed_ = 0;

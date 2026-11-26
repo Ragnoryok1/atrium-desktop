@@ -78,7 +78,7 @@ public:
     // True while the physical pointer right-click fallback is moving the cursor.
     static bool SyntheticPointerInFlight() { return tray::g_pointerInFlight; }
     // Opens an existing background session; false when the app is not in the tray/running.
-    bool OpenExisting(const std::wstring& exe);
+    bool OpenExisting(const std::wstring& exe, DWORD preferredPid = 0);
     // The tray host (setting `trayHost`): the apps' icons as they send them, clicked with
     // the shell's own messages. Icons only Explorer's tray has stay in the list. UI thread.
     void SetHosting(bool on);
@@ -99,7 +99,16 @@ public:
     void Hover(const TrayIcon* icon, RECT cell = {});
     void SetHostPlaces(RECT anchor); // the panel's place on screen, for apps that ask where their icon is
     // The programs whose tray icon flashes now (hosted icons only): a message waiting.
-    std::vector<std::wstring> Flashing() const;
+    std::vector<std::wstring> Flashing() const
+    {
+        std::lock_guard g(mutex_);
+        return host_ && !host_->Yielded() ? host_->Flashing() : std::vector<std::wstring>{};
+    }
+    std::vector<FlashingTrayIcon> FlashingIcons() const
+    {
+        std::lock_guard g(mutex_);
+        return host_ && !host_->Yielded() ? host_->FlashingIcons() : std::vector<FlashingTrayIcon>{};
+    }
 
     // First line of a tooltip, for display.
     static std::wstring Title(const std::wstring& tip);

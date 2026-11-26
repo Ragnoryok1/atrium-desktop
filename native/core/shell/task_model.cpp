@@ -1377,11 +1377,17 @@ struct TaskModel::Impl {
         return m == meta.end() ? std::wstring() : m->second.aumid;
     }
 
-    void Show(const std::wstring& key)
+    bool Show(const std::wstring& key, DWORD pid = 0)
     {
         const TaskItem* t = Find(key);
-        if (t && !t->windows.empty() && !t->active)
-            BringToFront(t->windows.front());
+        if (!t || t->windows.empty())
+            return false;
+        if (pid == 0)
+            return t->active ? true : (BringToFront(t->windows.front()), true);
+        for (DWORD winPid = 0; HWND h : t->windows)
+            if (GetWindowThreadProcessId(h, &winPid) && winPid == pid)
+                return BringToFront(h), true;
+        return false;
     }
 
     void MoveRunning(const std::wstring& key, int to)
@@ -1503,17 +1509,12 @@ void TaskModel::Launch(const std::wstring& key)
     }
 }
 
-bool TaskModel::CanTerminate(const std::wstring& key) const
-{
-    const auto targets = impl_->TerminationTargets(key);
-    return std::ranges::any_of(targets, CanTerminateApp);
-}
+bool TaskModel::CanTerminate(const std::wstring& key) const { return std::ranges::any_of(impl_->TerminationTargets(key), CanTerminateApp); }
 
 void TaskModel::Terminate(const std::wstring& key)
 {
     try {
-        const auto targets = impl_->TerminationTargets(key);
-        TerminateAppProcesses(targets);
+        TerminateAppProcesses(impl_->TerminationTargets(key));
         impl_->MarkDirty();
     } catch (...) {
         Log(L"tasks: Terminate failed");
@@ -1529,12 +1530,12 @@ PinnedApp TaskModel::PinFor(const std::wstring& key) const
     }
 }
 
-void TaskModel::Show(const std::wstring& key)
+bool TaskModel::Show(const std::wstring& key, DWORD pid)
 {
     try {
-        impl_->Show(key);
+        return impl_->Show(key, pid);
     } catch (...) {
-        Log(L"tasks: Show failed");
+        return false;
     }
 }
 
@@ -1592,26 +1593,24 @@ std::vector<PinnedApp> TaskModel::ImportWindowsPins()
     try {
         ComScope com;
         PWSTR base = nullptr;
-        std::wstring dir;
-        if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &base)))
-            dir = std::wstring(base) + L"\\Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar";
+        const std::wstring dir = SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &base)) && base ?
+                                     std::wstring(base) + L"\\Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar" :
+                                     std::wstring{};
         CoTaskMemFree(base);
-        if (dir.empty())
-            return pins;
         WIN32_FIND_DATAW fd{};
-        HANDLE find = FindFirstFileW((dir + L"\\*.lnk").c_str(), &fd);
-        if (find == INVALID_HANDLE_VALUE)
-            return pins;
-        do {
-            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-                continue;
-            PinnedApp p{fd.cFileName, dir + L"\\" + fd.cFileName};
-            p.name.resize(p.name.size() - 4); // ".lnk"
-            std::wstring target;
-            ReadLink(p.path, target, p.aumid);
-            pins.push_back(std::move(p));
-        } while (FindNextFileW(find, &fd));
-        FindClose(find);
+        HANDLE find = !dir.empty() ? FindFirstFileW((dir + L"\\*.lnk").c_str(), &fd) : INVALID_HANDLE_VALUE;
+        if (find != INVALID_HANDLE_VALUE) {
+            do {
+                if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+                    PinnedApp p{fd.cFileName, dir + L"\\" + fd.cFileName};
+                    p.name.resize(p.name.size() - 4);
+                    std::wstring target;
+                    ReadLink(p.path, target, p.aumid);
+                    pins.push_back(std::move(p));
+                }
+            } while (FindNextFileW(find, &fd));
+            FindClose(find);
+        }
     } catch (...) {
         Log(L"tasks: ImportWindowsPins failed");
     }

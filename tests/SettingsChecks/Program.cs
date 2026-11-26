@@ -64,6 +64,12 @@ var visibleOff = BarSettings.FromJson(JsonNode.Parse("""{"barReserve":false,"bar
 Require(new BarSettings().BarReserve && new BarSettings().BarFullscreenHide && !visibleOff.BarReserve && !visibleOff.BarFullscreenHide &&
         BarSettings.FromJson(visibleOff.ToJson(), new()) is { BarReserve: false, BarFullscreenHide: false } && !new BarSettings().SameAs(visibleOff),
     "The always-shown bar keeps room and hides for full-screen apps by default; both off survive a round trip and mark the settings dirty.");
+var dodgeOn = BarSettings.FromJson(JsonNode.Parse("""{"barDodge":true}""")!.AsObject(), new());
+Require(!new BarSettings().BarDodge && dodgeOn.BarDodge &&
+        BarSettings.FromJson(dodgeOn.ToJson(), new()).BarDodge && !new BarSettings().SameAs(dodgeOn) &&
+        BarSettings.FromJson(JsonNode.Parse("""{"autoHide":"dodge"}""")!.AsObject(), new()) is { AutoHide: "fullscreen", BarDodge: true } &&
+        BarSettings.FromJson(JsonNode.Parse("""{"autoHide":"__invalid__"}""")!.AsObject(), new()) is { AutoHide: "fullscreen", BarDodge: false },
+    "BarDodge defaults off, survives a round trip, marks settings dirty, and migrates legacy autoHide dodge.");
 var peekOff = BarSettings.FromJson(JsonNode.Parse("""{"windowPeek":false}""")!.AsObject(), new());
 Require(new BarSettings().WindowPeek && !peekOff.WindowPeek && !BarSettings.FromJson(peekOff.ToJson(), new()).WindowPeek && !new BarSettings().SameAs(peekOff),
     "Peeking at windows is on by default, and off survives a round trip and marks the settings dirty.");
@@ -222,9 +228,11 @@ Require(new PinnedApp("Explorer", "", "", "Microsoft.Windows.Explorer").AllowsMu
 {
     var modulesDefault = new BarSettings();
     Require(modulesDefault.ControlModules.SequenceEqual(["stage"]), "Control centre modules must default to Stage Manager.");
-    var modules = BarSettings.FromJson(JsonNode.Parse("""{"controlModules":[" darkmode ","wifi","stage","darkmode","","hotspot"]}""")!.AsObject(), new());
-    Require(modules.ControlModules.SequenceEqual(["darkmode", "stage", "hotspot"]) && BarSettings.FromJson(modules.ToJson(), new()).SameAs(modules) &&
-            !modules.SameAs(modulesDefault),
+    var modules = BarSettings.FromJson(
+        JsonNode.Parse("""{"controlModules":[" darkmode ","wifi","stage","dnd","darkmode","","airplane","hotspot"]}""")!.AsObject(),
+        new());
+    Require(modules.ControlModules.SequenceEqual(["darkmode", "stage", "dnd", "airplane", "hotspot"]) &&
+            BarSettings.FromJson(modules.ToJson(), new()).SameAs(modules) && !modules.SameAs(modulesDefault),
         "Control centre modules must keep known ids once, in order, and survive a round trip.");
     var nightLight = BarSettings.FromJson(JsonNode.Parse("""{"controlModules":["nightlight","stage","darkmode"]}""")!.AsObject(), new());
     Require(nightLight.ControlModules.SequenceEqual(["darkmode", "stage"]),
@@ -1340,11 +1348,11 @@ finally
                 new BarSettings { ControlModules = ["stage", "darkmode"] },
                 new BarSettings { ControlModules = ["stage", "darkmode"] },
                 "i1", 1);
-            cmAll.Draft.ControlModules = ["darkmode", "stage", "energysaver"];
-            cmAll.ApplyConflict(new BarSettings { ControlModules = ["stage", "darkmode", "hotspot"] }, 2, "i1");
-            Require(cmAll.Draft.ControlModules.Count <= 4 &&
-                    cmAll.Draft.ControlModules.SequenceEqual(["darkmode", "stage", "energysaver", "hotspot"]),
-                "ControlModules 3-way merge must preserve reorder and cap at 4 known modules.");
+            cmAll.Draft.ControlModules = ["darkmode", "stage", "energysaver", "dnd"];
+            cmAll.ApplyConflict(new BarSettings { ControlModules = ["stage", "darkmode", "hotspot", "airplane"] }, 2, "i1");
+            Require(cmAll.Draft.ControlModules.Count <= 6 &&
+                    cmAll.Draft.ControlModules.SequenceEqual(["darkmode", "stage", "energysaver", "dnd", "hotspot", "airplane"]),
+                "ControlModules 3-way merge must preserve reorder and cap at 6 known modules.");
         }
 
         // 7c. SettingsSession.Initialized & early-edit before ConnectAsync/GetAsync completes
@@ -1437,6 +1445,10 @@ finally
         Require(!devRoot.UseShellExecute &&
                 devRoot.ArgumentList.SequenceEqual(["--development", "--data-dir", @"D:\"]),
             "Dev mode CoreStartInfo must preserve root drive trailing backslash in ArgumentList.");
+
+        var adminStart = CoreClient.CoreStartInfo(exe, ["Atrium.Settings.exe"], development: false, runAsAdmin: true, replace: true);
+        Require(adminStart.UseShellExecute && adminStart.Verb == "runas" && adminStart.Arguments.Contains("--replace"),
+            "Elevated CoreStartInfo must set UseShellExecute, Verb=runas, and --replace in Arguments.");
     }
 }
 Console.WriteLine("Hardening regression checks passed.");

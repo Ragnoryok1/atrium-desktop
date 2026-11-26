@@ -30,6 +30,26 @@ internal sealed partial class CoreClient : IDisposable
 {
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetNamedPipeServerProcessId(IntPtr pipe, out uint processId);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint desiredAccess, bool inheritHandle, uint processId);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool QueryFullProcessImageNameW(IntPtr process, uint flags, char[] exeName, ref uint size);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    private static string? TryGetProcessPath(uint pid)
+    {
+        const uint ProcessQueryLimitedInformation = 0x1000;
+        IntPtr proc = OpenProcess(ProcessQueryLimitedInformation, false, pid);
+        if (proc == IntPtr.Zero) return null;
+        try
+        {
+            char[] buf = new char[32768];
+            uint len = (uint)buf.Length;
+            return QueryFullProcessImageNameW(proc, 0, buf, ref len) && len > 0 ? new string(buf, 0, (int)len) : null;
+        }
+        finally { CloseHandle(proc); }
+    }
 
     private readonly string _pipeName;
     private readonly string _settingsPath;
@@ -128,6 +148,7 @@ internal sealed partial class CoreClient : IDisposable
 
     public bool Connected => _pipe is { IsConnected: true };
     public int ProcessId { get; private set; }
+    public bool CoreElevated { get; private set; }
     public bool StateConfirmed { get; private set; }
     public string? InstanceId { get; private set; }
     public ulong Revision { get; private set; }
@@ -139,18 +160,51 @@ internal sealed partial class CoreClient : IDisposable
         return null;
     }
 
-    internal static ProcessStartInfo CoreStartInfo(string exe, string[]? args = null, bool? development = null)
+    internal static ProcessStartInfo CoreStartInfo(
+        string exe, string[]? args = null, bool? development = null, bool runAsAdmin = false, bool replace = false)
     {
         bool dev = development ?? Development;
-        if (dev && TryParseDataDirArgument(args ?? Environment.GetCommandLineArgs(), out string? custom, out bool specified) && specified && custom != null)
+        var list = new List<string>();
+        if (replace) list.Add("--replace");
+        if (dev && TryParseDataDirArgument(args ?? Environment.GetCommandLineArgs(), out string? custom, out bool specified) &&
+            specified && custom != null)
+        {
+            list.Add("--development");
+            list.Add("--data-dir");
+            list.Add(custom);
+        }
+        if (runAsAdmin)
+        {
+            return new ProcessStartInfo(exe)
+            {
+                UseShellExecute = true,
+                Verb = "runas",
+                Arguments = string.Join(" ", list.Select(QuoteArg)),
+            };
+        }
+        if (list.Count > 0)
         {
             var info = new ProcessStartInfo(exe) { UseShellExecute = false };
-            info.ArgumentList.Add("--development");
-            info.ArgumentList.Add("--data-dir");
-            info.ArgumentList.Add(custom);
+            foreach (string a in list) info.ArgumentList.Add(a);
             return info;
         }
         return new ProcessStartInfo(exe) { UseShellExecute = true };
+    }
+
+    private static string QuoteArg(string a)
+    {
+        if (a.Length > 0 && !a.Any(c => char.IsWhiteSpace(c) || c == '"')) return a;
+        var sb = new System.Text.StringBuilder("\"");
+        int bs = 0;
+        foreach (char c in a)
+        {
+            if (c == '\\') { bs++; continue; }
+            if (c == '"') { sb.Append('\\', bs * 2 + 1); sb.Append('"'); bs = 0; continue; }
+            if (bs > 0) { sb.Append('\\', bs); bs = 0; }
+            sb.Append(c);
+        }
+        if (bs > 0) sb.Append('\\', bs * 2);
+        return sb.Append('"').ToString();
     }
 
     public async Task<bool> ConnectAsync(int timeoutMs)
@@ -167,9 +221,14 @@ internal sealed partial class CoreClient : IDisposable
                 pipe.Dispose();
                 return false;
             }
-            using var process = Process.GetProcessById((int)pid);
+            string? actual = TryGetProcessPath(pid);
+            if (actual == null)
+            {
+                using var process = Process.GetProcessById((int)pid);
+                actual = process.MainModule?.FileName;
+            }
             string? expected = _expectedServerExe ?? CoreExe();
-            if (expected == null || !string.Equals(process.MainModule?.FileName, expected, StringComparison.OrdinalIgnoreCase))
+            if (expected == null || !string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
             {
                 _connectionLost = true;
                 ConnectionError = Loc.T("Atrium is running from another location; the core in this folder was not connected.");
@@ -205,6 +264,7 @@ internal sealed partial class CoreClient : IDisposable
         _pipe?.Dispose();
         _pipe = null;
         ProcessId = 0;
+        CoreElevated = false;
         StateConfirmed = false;
         InstanceId = null;
         Revision = 0;
@@ -262,6 +322,7 @@ internal sealed partial class CoreClient : IDisposable
         if (r?["op"]?.GetValue<string>() == "state")
         {
             StateConfirmed = true;
+            CoreElevated = r["elevated"] is JsonValue ev && ev.TryGetValue(out bool elev) && elev;
             InstanceId = ParseNonEmptyString(r["instanceId"]);
             Revision = ParseRevision(r["revision"]);
             return new CoreState(
@@ -328,6 +389,9 @@ internal sealed partial class CoreClient : IDisposable
     }
 
     public Task<string?> CancelAsync() => Send("cancel", null);
+
+    public async Task<bool> QuitCoreAsync() =>
+        (await RequestAsync(new JsonObject { ["op"] = "quit" }))?["op"]?.GetValue<string>() == "ok";
 
     // Puts a desktop widget in the first free place ("clock", "medium"); null on success.
     public async Task<string?> AddWidgetAsync(string kind, string size)

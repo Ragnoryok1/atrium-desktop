@@ -5,14 +5,12 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:Atrium.Settings"
     Title="Atrium Settings">
-
     <!-- Three columns (DESIGN.md §8): the sidebar on the window's material; the workspace (live preview,
          the page's main choices) scrolling on its own; the inspector (the page's other parameters) on the right,
          scrolling on its own. A narrow window folds the inspector under the workspace (OnContentSizeChanged). -->
     <Grid x:Name="RootGrid">
         <Grid.RowDefinitions><RowDefinition Height="56" /><RowDefinition Height="*" /></Grid.RowDefinitions>
         <Grid.ColumnDefinitions><ColumnDefinition Width="232" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-
         <!-- Both scrolling columns start below this fixed title bar. -->
         <Border Grid.ColumnSpan="2" Background="{ThemeResource PageBrush}" BorderBrush="{ThemeResource CardStrokeBrush}" BorderThickness="0,0,0,1">
             <Grid ColumnSpacing="16">
@@ -35,7 +33,6 @@
                 </Border>
             </Grid>
         </Border>
-
         <!-- ============ Sidebar ============ -->
         <Grid Grid.Row="1" Padding="12,16,12,18">
             <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
@@ -593,42 +590,46 @@
                     </StackPanel>
 
                     <!-- ==== System ==== -->
-                    <StackPanel x:Name="MainSystem" Visibility="Collapsed">
-                        <TextBlock Text="Language" Style="{StaticResource SectionStyle}" />
-                        <Border Style="{StaticResource TileStyle}" Margin="0,0,0,8">
-                            <StackPanel Spacing="10">
-                                <TextBlock Text="Interface language" Style="{StaticResource RowTitleStyle}" />
-                                <ComboBox x:Name="LanguagePicker" HorizontalAlignment="Stretch" SelectionChanged="OnLanguageChanged"
-                                          AutomationProperties.Name="Interface language">
-                                    <ComboBoxItem Content="Follow system" Tag="auto" />
-                                    <ComboBoxItem Content="Chinese (Simplified)" Tag="zh-Hans" />
-                                    <ComboBoxItem Content="English" Tag="en" />
-                                </ComboBox>
-                            </StackPanel>
-                        </Border>
-                        <TextBlock Text="Windows" Style="{StaticResource SectionStyle}" />
-                        <local:ResponsiveGrid MinCellWidth="280" Gap="12" StretchLastRow="True">
-                            <local:ToggleTile x:Name="StartupSwitch" Title="Start with Windows" SwitchName="Start with Windows" Toggled="OnStartupToggled"
-                                              Note="Start Atrium when you sign in to Windows." />
-                            <local:ToggleTile x:Name="HideTaskbarSwitch" Title="Hide the system taskbar" SwitchName="Hide the system taskbar"
-                                              Toggled="OnHideTaskbarToggled"
-                                              Note="Keep only the Atrium bar. Windows' taskbar returns when this is turned off or Atrium quits; system shortcuts such as the Windows key keep working." />
-                            <local:ToggleTile x:Name="GenieSwitch" Title="Genie effect" SwitchName="Minimize with the genie effect"
-                                              Toggled="OnGenieToggled"
-                                              Note="As on macOS, a window being minimized pours into its icon on the Atrium bar." />
-                            <local:ToggleTile x:Name="PeekSwitch" Title="Peek at windows" SwitchName="Peek at windows"
-                                              Toggled="OnPeekToggled"
-                                              Note="Rest the pointer on a window's picture in the bar's preview to see that window where it is, with the other windows faded." />
-                            <local:ToggleTile x:Name="HideBannersSwitch" Title="Hide system banners" SwitchName="Hide system banners"
-                                              Toggled="OnHideBannersToggled"
-                                              Note="Turns on Windows' Do Not Disturb; notifications still appear as Atrium cards. Restored when turned off or Atrium quits." />
-                            <local:ToggleTile x:Name="WinKeySwitch" Title="Win key opens Start menu" SwitchName="Win key opens Start menu"
-                                              Toggled="OnWinKeyToggled" />
-                            <local:ToggleTile x:Name="WinNumbersSwitch" Title="Win + number opens apps" SwitchName="Win + number opens apps"
-                                              Toggled="OnWinNumbersToggled" />
-                            <local:ToggleTile x:Name="RemoteVisibleSwitch" Title="Remote control compatibility" SwitchName="Remote control compatibility"
-                                              Toggled="OnRemoteVisibleToggled" />
-                        </local:ResponsiveGrid>
+                    <StackPanel x:Name="MainSystem" Visibility="Collapsed" Spacing="28">
+                        <StackPanel>
+                            <TextBlock Text="Language" Style="{StaticResource SectionStyle}" />
+                            <Border Style="{StaticResource TileStyle}">
+                                <StackPanel Spacing="10">
+                                    <TextBlock Text="Interface language" Style="{StaticResource RowTitleStyle}" />
+                                    <ComboBox x:Name="LanguagePicker" HorizontalAlignment="Stretch" SelectionChanged="OnLanguageChanged"
+                                              AutomationProperties.Name="Interface language">
+                                        <ComboBoxItem Content="Follow system" Tag="auto" />
+                                        <ComboBoxItem Content="Chinese (Simplified)" Tag="zh-Hans" />
+                                        <ComboBoxItem Content="English" Tag="en" />
+                                    </ComboBox>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock Text="Windows" Style="{StaticResource SectionStyle}" />
+                            <local:ResponsiveGrid MinCellWidth="280" Gap="12" StretchLastRow="True">
+                                <local:ToggleTile x:Name="StartupSwitch" Title="Start with Windows" SwitchName="Start with Windows" Toggled="OnStartupToggled"
+                                                  Note="Start Atrium when you sign in to Windows." />
+                                <local:ToggleTile x:Name="HideTaskbarSwitch" Title="Hide the system taskbar" SwitchName="Hide the system taskbar"
+                                                  Toggled="OnHideTaskbarToggled"
+                                                  Note="Keep only the Atrium bar. Windows' taskbar returns when this is turned off or Atrium quits; system shortcuts such as the Windows key keep working." />
+                                <local:ToggleTile x:Name="GenieSwitch" Title="Genie effect" SwitchName="Minimize with the genie effect"
+                                                  Toggled="OnGenieToggled"
+                                                  Note="As on macOS, a window being minimized pours into its icon on the Atrium bar." />
+                                <local:ToggleTile x:Name="PeekSwitch" Title="Peek at windows" SwitchName="Peek at windows"
+                                                  Toggled="OnPeekToggled"
+                                                  Note="Rest the pointer on a window's picture in the bar's preview to see that window where it is, with the other windows faded." />
+                                <local:ToggleTile x:Name="HideBannersSwitch" Title="Hide system banners" SwitchName="Hide system banners"
+                                                  Toggled="OnHideBannersToggled"
+                                                  Note="Turns on Windows' Do Not Disturb; notifications still appear as Atrium cards. Restored when turned off or Atrium quits." />
+                                <local:ToggleTile x:Name="WinKeySwitch" Title="Win key opens Start menu" SwitchName="Win key opens Start menu"
+                                                  Toggled="OnWinKeyToggled" />
+                                <local:ToggleTile x:Name="WinNumbersSwitch" Title="Win + number opens apps" SwitchName="Win + number opens apps"
+                                                  Toggled="OnWinNumbersToggled" />
+                                <local:ToggleTile x:Name="RemoteVisibleSwitch" Title="Remote control compatibility" SwitchName="Remote control compatibility"
+                                                  Toggled="OnRemoteVisibleToggled" />
+                            </local:ResponsiveGrid>
+                        </StackPanel>
                     </StackPanel>
 
                     <!-- ==== Design language: built in code (MainWindow.Design.cs) the first time it is shown ==== -->
@@ -791,15 +792,17 @@
                                 <StackPanel Style="{StaticResource FlatRowStyle}">
                                     <TextBlock Text="Visibility" Style="{StaticResource RowTitleStyle}" />
                                     <local:SegmentTrack>
-                                        <RadioButton x:Name="HideNever" GroupName="autohide" Content="Visible" Tag="never" Style="{StaticResource SegmentStyle}"
-                                                     Checked="OnAutoHideChecked" />
+                                        <RadioButton x:Name="HideNever" GroupName="autohide" Content="Visible" Tag="never"
+                                                     Style="{StaticResource SegmentStyle}" Checked="OnAutoHideChecked" />
                                         <RadioButton x:Name="HideFullscreen" GroupName="autohide" Content="Full screen" Tag="fullscreen"
                                                      Style="{StaticResource SegmentStyle}" Checked="OnAutoHideChecked" />
                                         <RadioButton x:Name="HideAlways" GroupName="autohide" Content="Always hidden" Tag="always"
                                                      Style="{StaticResource SegmentStyle}" Checked="OnAutoHideChecked" />
                                     </local:SegmentTrack>
                                 </StackPanel>
-                                <!-- Only for "Visible" (autoHide never) -->
+                                <local:ToggleTile x:Name="BarDodgeSwitch" Title="Dodge windows" SwitchName="Dodge windows"
+                                                  Toggled="OnBarDodgeToggled" Flat="True"
+                                                  Note="Hide the taskbar whenever a window overlaps it; move the pointer to the edge to bring it back." />
                                 <StackPanel x:Name="VisibleOptions">
                                     <local:ToggleTile x:Name="BarReserveSwitch" Title="Keep room for windows" SwitchName="Keep room for windows"
                                                       Toggled="OnBarReserveToggled" Flat="True"
@@ -1041,8 +1044,7 @@
                                 </StackPanel>
                                 <StackPanel Style="{StaticResource FlatRowStyle}" Spacing="2">
                                     <TextBlock Text="Close or quit" Style="{StaticResource RowTitleStyle}" />
-                                    <TextBlock Text="All put-away windows are restored." Style="{StaticResource RowNoteStyle}"
-                                               TextWrapping="Wrap" />
+                                    <TextBlock Text="All put-away windows are restored." Style="{StaticResource RowNoteStyle}" TextWrapping="Wrap" />
                                 </StackPanel>
                             </StackPanel>
                         </StackPanel>
@@ -1086,7 +1088,6 @@
                     </StackPanel>
                 </ScrollViewer>
             </Grid>
-            <!-- Errors: a quiet banner over the workspace's top -->
             <InfoBar x:Name="Status" IsOpen="False" IsClosable="True" MaxWidth="760" Margin="32,12,32,0" VerticalAlignment="Top" />
         </Grid>
     </Grid>

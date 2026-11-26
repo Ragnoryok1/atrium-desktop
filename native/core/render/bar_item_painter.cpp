@@ -23,6 +23,29 @@ D2D1_COLOR_F FadeColor(D2D1_COLOR_F c, float a)
     return c;
 }
 
+void DrawConnectionSymbol(ID2D1DeviceContext2* d2d, IDWriteTextFormat* glyphFmt, ID2D1SolidColorBrush* brush, const SystemStatus& st, float cx, float cy,
+                          float fanRadius, D2D1_COLOR_F ink, D2D1_RECT_F textBox)
+{
+    const wchar_t* glyph = st.airplane && !st.connected ? L"\uE709" : st.connected && !st.wifi ? L"\uE839" : nullptr;
+    if (glyph) {
+        if (glyphFmt) {
+            brush->SetColor(ink);
+            d2d->DrawText(glyph, 1, glyphFmt, textBox, brush);
+        }
+        return;
+    }
+    const int lit = !st.connected ? -1 : WifiSteps(st.signal);
+    DrawWifiFan(d2d, brush, cx, cy, fanRadius, lit, ink, FadeColor(ink, lit < 0 ? 0.32f : 0.24f));
+}
+
+void DrawStatusGlyph(ID2D1DeviceContext2* d2d, IDWriteTextFormat* fmt, ID2D1SolidColorBrush* brush, const wchar_t* glyph, D2D1_RECT_F box, D2D1_COLOR_F ink)
+{
+    if (!fmt)
+        return;
+    brush->SetColor(ink);
+    d2d->DrawText(glyph, 1, fmt, box, brush);
+}
+
 void DrawAppBadge(ID2D1DeviceContext2* d2d, IDWriteFactory3* dwrite, IDWriteTextFormat* f, ID2D1SolidColorBrush* brush, const BarScene& scene,
                   const D2D1_RECT_F& iconArea, float size, int count, float appear)
 {
@@ -368,21 +391,10 @@ void BarPainter::DrawStatus(ID2D1DeviceContext2* d2d, const SystemStatus& st, D2
 {
     const float h = std::min(r.right - r.left, r.bottom - r.top), cx = (r.left + r.right) / 2, cy = (r.top + r.bottom) / 2;
     const StatusMotion& sm = statusMotion_;
-    winrt::com_ptr<ID2D1Factory> factory;
-    d2d->GetFactory(factory.put());
-    ID2D1StrokeStyle* round = RoundStroke(d2d);
     auto connection = [&](float size, float alpha) {
-        if (alpha <= 0.003f)
-            return;
-        if (st.connected && !st.wifi) {
-            if (IDWriteTextFormat* f = Format(size * 0.62f, DWRITE_FONT_WEIGHT_NORMAL, IconFontFamily())) {
-                brush->SetColor(FadeColor(ink, alpha));
-                d2d->DrawText(L"\uE839", 1, f, D2D1::RectF(cx - size, cy - size / 2, cx + size, cy + size / 2), brush);
-            }
-            return;
-        }
-        const int lit = !st.connected ? -1 : WifiSteps(st.signal);
-        DrawWifiFan(d2d, brush, cx, cy, size * 0.62f, lit, FadeColor(ink, alpha), FadeColor(ink, (lit < 0 ? 0.32f : 0.24f) * alpha));
+        if (alpha > 0.003f)
+            DrawConnectionSymbol(d2d, Format(size * 0.62f, DWRITE_FONT_WEIGHT_NORMAL, IconFontFamily()), brush, st, cx, cy, size * 0.62f, FadeColor(ink, alpha),
+                                 D2D1::RectF(cx - size, cy - size / 2, cx + size, cy + size / 2));
     };
 
     const bool ring = st.battery || st.audio || sm.brightMix > 0.003f;
@@ -390,6 +402,9 @@ void BarPainter::DrawStatus(ID2D1DeviceContext2* d2d, const SystemStatus& st, D2
         connection(h, 1);
         return;
     }
+    winrt::com_ptr<ID2D1Factory> factory;
+    d2d->GetFactory(factory.put());
+    ID2D1StrokeStyle* round = RoundStroke(d2d);
     constexpr float kGap = 64, kStart = 90 + kGap / 2, kSweep = 360 - kGap;
     const float rad = h * 0.44f, stroke = std::max(1.5f, h * 0.07f);
     const float shown = std::min(1.f, sm.volumeMix + sm.brightMix);
@@ -410,25 +425,19 @@ void BarPainter::DrawStatus(ID2D1DeviceContext2* d2d, const SystemStatus& st, D2
 
     const float speaker = st.battery ? sm.volumeMix : 0.f;
     connection(h * 0.6f, 1 - std::min(1.f, speaker + sm.brightMix));
-    auto symbol = [&](const wchar_t* glyph, float alpha) {
-        if (alpha <= 0.003f)
-            return;
-        if (IDWriteTextFormat* f = Format(h * 0.40f, DWRITE_FONT_WEIGHT_NORMAL, IconFontFamily())) {
-            brush->SetColor(FadeColor(ink, alpha));
-            d2d->DrawText(glyph, 1, f, D2D1::RectF(cx - h / 2, cy - h / 2, cx + h / 2, cy + h / 2), brush);
-        }
-    };
     const wchar_t* volumeGlyph = st.muted || st.volume == 0 ? L"\uE74F" : st.volume < 34 ? L"\uE993" : st.volume < 67 ? L"\uE994" : L"\uE995";
-    symbol(volumeGlyph, speaker);
-    symbol(L"\uE706", sm.brightMix);
+    const D2D1_RECT_F centerBox = D2D1::RectF(cx - h / 2, cy - h / 2, cx + h / 2, cy + h / 2);
+    if (speaker > 0.003f)
+        DrawStatusGlyph(d2d, Format(h * 0.40f, DWRITE_FONT_WEIGHT_NORMAL, IconFontFamily()), brush, volumeGlyph, centerBox, FadeColor(ink, speaker));
+    if (sm.brightMix > 0.003f)
+        DrawStatusGlyph(d2d, Format(h * 0.40f, DWRITE_FONT_WEIGHT_NORMAL, IconFontFamily()), brush, L"\uE706", centerBox, FadeColor(ink, sm.brightMix));
 
     const float gapSpeaker = !st.battery && st.audio ? 1 - sm.brightMix : 0.f;
-    if (gapSpeaker > 0.003f)
-        if (IDWriteTextFormat* f = Format(h * 0.22f, DWRITE_FONT_WEIGHT_NORMAL, IconFontFamily())) {
-            brush->SetColor(FadeColor(ink, gapSpeaker));
-            const float gy = cy + rad;
-            d2d->DrawText(volumeGlyph, 1, f, D2D1::RectF(cx - h / 4, gy - h / 4, cx + h / 4, gy + h / 4), brush);
-        }
+    if (gapSpeaker > 0.003f) {
+        const float gy = cy + rad;
+        DrawStatusGlyph(d2d, Format(h * 0.22f, DWRITE_FONT_WEIGHT_NORMAL, IconFontFamily()), brush, volumeGlyph,
+                        D2D1::RectF(cx - h / 4, gy - h / 4, cx + h / 4, gy + h / 4), FadeColor(ink, gapSpeaker));
+    }
 }
 
 void BarPainter::DrawStatusIcons(ID2D1DeviceContext2* d2d, const SystemStatus& st, D2D1_RECT_F r, ID2D1SolidColorBrush* brush, D2D1_COLOR_F ink, bool darkInk)
@@ -445,15 +454,8 @@ void BarPainter::DrawStatusIcons(ID2D1DeviceContext2* d2d, const SystemStatus& s
 
     {
         const float nx = vertical ? cx - netW / 2 : x, ny = vertical ? y : cy;
-        if (st.connected && !st.wifi) {
-            if (IDWriteTextFormat* f = Format(h * 0.62f, DWRITE_FONT_WEIGHT_NORMAL, IconFontFamily())) {
-                brush->SetColor(ink);
-                d2d->DrawText(L"\uE839", 1, f, D2D1::RectF(nx - h, ny - h / 2, nx + netW + h, ny + h / 2), brush);
-            }
-        } else {
-            const int lit = !st.connected ? -1 : WifiSteps(st.signal);
-            DrawWifiFan(d2d, brush, nx + netW / 2, ny, h * 0.46f, lit, ink, FadeColor(ink, lit < 0 ? 0.32f : 0.24f));
-        }
+        DrawConnectionSymbol(d2d, Format(h * 0.62f, DWRITE_FONT_WEIGHT_NORMAL, IconFontFamily()), brush, st, nx + netW / 2, ny, h * 0.46f, ink,
+                             D2D1::RectF(nx - h, ny - h / 2, nx + netW + h, ny + h / 2));
         x += netW + gap;
         y += stepY;
     }

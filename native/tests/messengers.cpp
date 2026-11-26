@@ -2,6 +2,7 @@
 #include "shell/messengers.h"
 #include "shell/notification_listener.h"
 #include "shell/wechat_source.h"
+#include "ui/notification_layout.h"
 
 #include <iostream>
 #include <stdexcept>
@@ -236,6 +237,8 @@ int main()
                 throw std::runtime_error(message);
         };
         require(MessengerOfProgram(L"D:\\Download App\\Tencent\\Weixin\\Weixin.exe") == Messenger::WeChat, "WeChat 4 by its program");
+        require(MessengerOfProgram(L"C:\\Program Files (x86)\\Tencent\\TIM\\Bin\\TIM.exe") == Messenger::QQ, "TIM recognized as QQ");
+        require(MessengerOfNotice(L"windows", L"TIM", L"TIM") == Messenger::QQ, "TIM notification recognized as QQ");
         require(MessengerOfProgram(L"c:\\program files\\wxwork\\WXWork.exe") == Messenger::WeCom, "WeCom by its program");
         require(MessengerOfProgram(L"D:\\Tencent\\WXWorkLocalPro\\WXWorkLocalPro.exe") == Messenger::WeCom, "WeCom private edition");
         require(MessengerOfProgram(L"DingTalk.exe") == Messenger::DingTalk, "DingTalk by its file name");
@@ -266,6 +269,25 @@ int main()
         alerts.Cancel(Messenger::WeChat);
         require(alerts.Due(65000, &waiting).empty() && !waiting, "cancelled burst produces no plain card");
         require(alerts.Flash(Messenger::WeChat, 66000), "flash after cancel begins a new burst");
+
+        // Multi-instance isolation (two WeChat/QQ PIDs).
+        MessengerAlerts multi;
+        require(multi.Flash(Messenger::QQ, 1000, 101) && multi.Flash(Messenger::QQ, 1100, 202), "two QQ PIDs begin independent flash bursts");
+        multi.Noticed(Messenger::QQ, 1200, 101);
+        multi.Cancel(Messenger::WeChat, 303);
+        const auto dueMulti = multi.DueInstances(5000);
+        require(dueMulti.size() == 1 && dueMulti[0] == (MessengerAlerts::DueAlert{Messenger::QQ, 202}), "noticed/cancel on PID 101 does not suppress PID 202");
+        require(multi.Flash(Messenger::WeChat, 10000, 111) && multi.Flash(Messenger::WeChat, 10100, 222), "two WeChat PIDs begin independent flash bursts");
+        multi.Cancel(Messenger::WeChat, 111);
+        const auto dueWeChat = multi.DueInstances(14000);
+        require(dueWeChat.size() == 1 && dueWeChat[0] == (MessengerAlerts::DueAlert{Messenger::WeChat, 222}),
+                "cancelling one WeChat PID keeps sibling PID pending");
+
+        Notice cardPid1{.source = L"wechat", .title = L"文件传输助手", .pid = 111};
+        Notice cardPid2{.source = L"wechat", .title = L"文件传输助手", .pid = 222};
+        const Notice withdrawPid1{.source = L"wechat", .title = L"文件传输助手", .unread = false, .pid = 111};
+        require(notification::WithdrawNotice(cardPid1, withdrawPid1), "matching PID withdraws notice");
+        require(!notification::WithdrawNotice(cardPid2, withdrawPid1), "mismatched PID must not withdraw sibling account notice");
 
         CheckWeChatTime();
         CheckWeChatRows();

@@ -8,6 +8,7 @@
 
 #include "localization.h"
 #include "log.h"
+#include "shell/quick_toggles.h"
 #include "shell/wifi.h"
 #include "../posted.h"
 
@@ -316,6 +317,7 @@ SystemStatus QuerySystemStatus()
         s.batteryMinutes = s.battery && !s.charging && ps.BatteryLifeTime != DWORD(-1) ? int(ps.BatteryLifeTime / 60) : -1;
     }
     try {
+        s.airplane = ReadAirplaneModeFast();
         QueryNetwork(s);
         // Read interactive volume last: a slower network query must not
         // deliver a volume value captured before the user's latest input.

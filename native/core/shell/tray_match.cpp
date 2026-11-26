@@ -1,4 +1,5 @@
 #include "tray_match.h"
+#include "win32_path.h"
 #include <windows.h>
 #include <algorithm>
 #include <cwctype>
@@ -58,63 +59,29 @@ std::optional<ShellTrayKnown> KnownShellTray(const std::wstring& guidOrId)
         return ShellTrayKnown{{L"安全删除硬件并弹出媒体", L"Safely Remove Hardware and Eject Media"}, L"hotplug.dll"};
     if (norm == L"BA82E2DC-F405-47AD-B032-CF0FAA0E3933")
         return ShellTrayKnown{{L"Windows 安全中心", L"Windows Security"}, nullptr};
+    if (norm == L"7120A42D-CB02-4A51-B3B5-58E36E8B14E1" || norm == L"D68540CC-E0D8-4298-B55C-E6E324121F77")
+        return ShellTrayKnown{{L"管理显示模式", L"管理顯示模式", L"Manage Display Mode", L"NVIDIA Display Mode"}, nullptr};
+    if (norm == L"D36B22A6-995E-4340-8339-3DE08C6840DF")
+        return ShellTrayKnown{{L"NVIDIA GPU 活动", L"NVIDIA GPU 活動", L"NVIDIA GPU Activity", L"NVIDIA GeForce", L"NVIDIA RTX", L"NVIDIA Quadro",
+                               L"NVIDIA TITAN", L"GPU Activity"},
+                              nullptr};
     return std::nullopt;
 }
 std::wstring FallbackRecordTip(const Record& r)
 {
     if (!r.tip.empty())
         return r.tip;
-    if (IsShellExplorerExe(r.exe)) {
-        const auto known = KnownShellTray(r.identity.empty() ? r.id : r.identity);
-        return known && !known->aliases.empty() ? known->aliases.front() : std::wstring{};
-    }
+    if (const auto known = KnownShellTray(r.identity.empty() ? r.id : r.identity); known && !known->aliases.empty())
+        return known->aliases.front();
+    if (IsShellExplorerExe(r.exe))
+        return {};
     for (size_t i : {size_t(1), size_t(2), size_t(3)})
         if (r.names.size() > i && !r.names[i].empty())
             return r.names[i];
     return {};
 }
 namespace {
-std::wstring RepairMojibakeSegment(const std::wstring& seg)
-{
-    if (seg.empty() || std::ranges::all_of(seg, [](wchar_t ch) { return ch < 0x80; }))
-        return seg;
-    const UINT acp = GetACP();
-    if (acp == CP_UTF8)
-        return seg;
-    BOOL usedDefault = FALSE;
-    const int byteCount = WideCharToMultiByte(acp, WC_NO_BEST_FIT_CHARS, seg.data(), int(seg.size()), nullptr, 0, nullptr, &usedDefault);
-    if (byteCount <= 0 || usedDefault)
-        return seg;
-    std::string bytes(size_t(byteCount), '\0');
-    if (WideCharToMultiByte(acp, WC_NO_BEST_FIT_CHARS, seg.data(), int(seg.size()), bytes.data(), byteCount, nullptr, &usedDefault) != byteCount || usedDefault)
-        return seg;
-    const int acpChars = MultiByteToWideChar(acp, MB_ERR_INVALID_CHARS, bytes.data(), byteCount, nullptr, 0);
-    if (acpChars != int(seg.size()))
-        return seg;
-    std::wstring roundTrip(size_t(acpChars), L'\0');
-    if (MultiByteToWideChar(acp, MB_ERR_INVALID_CHARS, bytes.data(), byteCount, roundTrip.data(), acpChars) != acpChars || roundTrip != seg)
-        return seg;
-    if (std::ranges::none_of(bytes, [](unsigned char b) { return b >= 0x80; }))
-        return seg;
-    const int utf16Chars = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, bytes.data(), byteCount, nullptr, 0);
-    if (utf16Chars <= 0)
-        return seg;
-    std::wstring decoded(size_t(utf16Chars), L'\0');
-    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, bytes.data(), byteCount, decoded.data(), utf16Chars) != utf16Chars || decoded == seg)
-        return seg;
-    const bool inputHasEastAsian = std::ranges::any_of(seg, [](wchar_t ch) { return ch >= 0x2E80; });
-    const bool inputHasPua = std::ranges::any_of(seg, [](wchar_t ch) { return ch >= 0xE000 && ch <= 0xF8FF; });
-    bool decodedHasHigh = false;
-    for (wchar_t ch : decoded) {
-        if ((ch >= 0x0080 && ch <= 0x009F) || ch == 0xFFFD || (ch < 0x20 && ch != L'\t') || (!inputHasPua && ch >= 0xE000 && ch <= 0xF8FF))
-            return seg;
-        if (ch >= 0x0800)
-            decodedHasHigh = true;
-    }
-    if (inputHasEastAsian && !decodedHasHigh)
-        return seg;
-    return decoded;
-}
+std::wstring RepairMojibakeSegment(const std::wstring& seg) { return RepairUtf8Mojibake(seg, GetACP(), false); }
 bool DelimitedPrefix(const std::wstring& text, const std::wstring& name)
 {
     // Keep the boundary that Key removes: Steam - syncing is a status suffix,

@@ -108,7 +108,7 @@ struct App {
     std::unique_ptr<WeChatSource> wechat;
     std::unique_ptr<FeishuSource> feishu;
     MessengerAlerts alerts;
-    std::array<std::wstring, size_t(Messenger::Count)> messengerProgram; // the program that flashed last
+    std::map<std::pair<Messenger, DWORD>, MessengerSourceMeta> messengerSources;
     std::unique_ptr<TrayModel> tray;
     std::unique_ptr<TrayPanel> trayPanel;
     std::unique_ptr<ExtrasHost> extras; // Launchpad, the now-playing entry, the folder stack
@@ -436,39 +436,34 @@ bool MessengerOn(Messenger m)
     }
 }
 
-// A chat app flashed for a message (its window, or its tray icon began to): a plain card follows
-// unless one with the message's text does (MessengerAlerts).
-void MessengerFlashed(const std::wstring& program)
+void MessengerFlashed(const std::wstring& program, DWORD pid = 0, const std::wstring& hostKey = {})
 {
     const Messenger m = MessengerOfProgram(program);
     if (m == Messenger::None || !g_app.barOn.value_or(true) || !MessengerOn(m))
         return;
-    g_app.messengerProgram[size_t(m)] = FoldCase(program);
+    g_app.messengerSources[{m, pid}] = {FoldCase(program), hostKey};
     if (m == Messenger::WeChat && g_app.wechat)
         g_app.wechat->Wake();
-    if (g_app.alerts.Flash(m, GetTickCount64()))
+    if (g_app.alerts.Flash(m, GetTickCount64(), pid))
         SetTimer(g_app.host, kMessengerTimer, UINT(MessengerAlerts::kWaitMs + 100), nullptr);
 }
 
-void PostMessengerCard(Messenger m)
+void PostMessengerCard(Messenger m, DWORD pid)
 {
     if (!g_app.notes || !g_app.barOn.value_or(true) || !MessengerOn(m))
         return;
-    if (HWND fg = GetForegroundWindow(); fg && MessengerOfProgram(ProgramOf(fg)) == m)
-        return; // the app is in front: the user sees the message there
-    if (m == Messenger::WeChat && g_app.wechat && g_app.wechat->Reading())
-        return; // its chat list brings the card, with the text (a flash comes first, and again)
-    const MessengerInfo& info = InfoOf(m);
-    Log(L"notify: %s flashed with no card: a plain one", info.key);
-    const std::wstring& program = g_app.messengerProgram[size_t(m)];
-    Notice n;
-    n.source = info.key;
-    n.app = Tr(info.name);
-    n.appId = program;
-    n.title = Tr(L"New message");
-    if (!program.empty())
-        n.action = L"app:" + program;
-    g_app.notes->Post(std::move(n));
+    if (HWND fg = GetForegroundWindow()) {
+        DWORD fgPid = 0;
+        GetWindowThreadProcessId(fg, &fgPid);
+        if (pid != 0 ? (fgPid == pid) : (MessengerOfProgram(ProgramOf(fg)) == m))
+            return;
+    }
+    if (m == Messenger::WeChat && g_app.wechat && g_app.wechat->ReadingPid(pid))
+        return;
+    Log(L"notify: %s flashed (pid %lu) with no card: a plain one", InfoOf(m).key, pid);
+    const auto it = g_app.messengerSources.find({m, pid});
+    const MessengerSourceMeta meta = it != g_app.messengerSources.end() ? it->second : MessengerSourceMeta{};
+    g_app.notes->Post(BuildMessengerCardNotice(m, pid, meta));
 }
 
 std::vector<TaskItem> BarItems();
@@ -605,11 +600,11 @@ void ApplySettings(const Settings& s)
 }
 
 void ShowItemMenu(const std::wstring& key, POINT pt) { ShowTaskItemMenu(MenuEnv(), key, pt); }
-
-void ShowCatalogMenu(const CatalogApp& app, POINT pt, std::function<void(bool)> done) { ShowCatalogAppMenu(MenuEnv(), app, pt, std::move(done)); }
-
+void ShowCatalogMenu(const CatalogApp& app, POINT pt, std::function<void(bool)> done, std::vector<AppMenuExtra> extras)
+{
+    ShowCatalogAppMenu(MenuEnv(), app, pt, std::move(done), std::move(extras));
+}
 void ShowOverflow(const std::vector<std::wstring>& keys, RECT anchor) { ShowOverflowAppsMenu(MenuEnv(), keys, anchor); }
-
 void Reorder(const std::wstring& key, int to) { ReorderBarTask(MenuEnv(), key, to); }
 
 // A popup of the bar's is open: the notification cards keep clear of it.
@@ -779,7 +774,7 @@ void SyncDisplayBars(const Settings& settings, bool refresh, bool workAreaOnly)
             ConfigureBar(*bar);
             bar->Apply(settings);
             bar->SetStatus(g_app.lastStatus);
-            bar->SetUnread(g_app.notes->Unread());
+            bar->SetUnread(g_app.notes->Unread()), bar->SetDoNotDisturb(g_app.notes->DoNotDisturb());
             g_app.secondaryBars.push_back(std::move(bar));
         }
     const auto items = BarItems();
@@ -868,10 +863,10 @@ void HandleNoticeMessage(LPARAM l)
         on = on && (messenger != Messenger::None ? MessengerOn(messenger) : n->source != L"windows" || g_app.displaySettings.notifyListener);
         if (g_app.notes && on) {
             if (n->source == L"wechat" && n->unread && (n->title != Tr(L"New message") || !n->body.empty()))
-                g_app.notes->Post(Notice{.source = L"wechat", .title = Tr(L"New message"), .unread = false});
+                g_app.notes->Post(Notice{.source = L"wechat", .title = Tr(L"New message"), .unread = false, .pid = n->pid});
             g_app.notes->Post(*n);
             if (n->unread)
-                g_app.alerts.Noticed(messenger, GetTickCount64());
+                g_app.alerts.Noticed(messenger, GetTickCount64(), n->pid);
         }
     }
 }
@@ -951,13 +946,13 @@ void HandleTrayIconsMessage(HWND h, WPARAM w)
     }
     if (g_app.trayPanel)
         g_app.trayPanel->Refresh();
-    static std::vector<std::wstring> lastFlashing;
-    std::vector<std::wstring> flashing = g_app.tray ? g_app.tray->Flashing() : std::vector<std::wstring>{};
-    std::ranges::sort(flashing);
+    static std::vector<FlashingTrayIcon> lastFlashing;
+    std::vector<FlashingTrayIcon> flashing = g_app.tray ? g_app.tray->FlashingIcons() : std::vector<FlashingTrayIcon>{};
+    std::ranges::sort(flashing, [](const auto& a, const auto& b) { return std::tie(a.hostKey, a.pid, a.exe) < std::tie(b.hostKey, b.pid, b.exe); });
     if (flashing != lastFlashing && g_app.tasks) {
-        for (const std::wstring& exe : flashing)
-            if (!std::ranges::binary_search(lastFlashing, exe))
-                MessengerFlashed(exe);
+        for (const auto& icon : flashing)
+            if (std::ranges::none_of(lastFlashing, [&](const auto& p) { return p.hostKey == icon.hostKey && p.pid == icon.pid && p.exe == icon.exe; }))
+                MessengerFlashed(icon.exe, icon.pid, icon.hostKey);
         lastFlashing = std::move(flashing);
         const auto items = BarItems();
         ForBars([&](Bar& bar) { bar.SetItems(items); });
@@ -1004,8 +999,8 @@ bool HandleHostTimer(HWND h, WPARAM w)
     if (w == kMessengerTimer) {
         KillTimer(h, kMessengerTimer);
         bool waiting = false;
-        for (Messenger due : g_app.alerts.Due(GetTickCount64(), &waiting))
-            PostMessengerCard(due);
+        for (const auto& due : g_app.alerts.DueInstances(GetTickCount64(), &waiting))
+            PostMessengerCard(due.messenger, due.pid);
         if (waiting)
             SetTimer(h, kMessengerTimer, 500, nullptr);
         return true;
@@ -1192,7 +1187,7 @@ std::optional<int> HandleLaunchCommand(const atrium::CoreLaunchOptions& launch)
     return wait == WAIT_OBJECT_0 ? 0 : 1;
 }
 
-HANDLE AcquireInstanceMutex(int& exitCode)
+HANDLE AcquireInstanceMutex(int& exitCode, bool replace)
 {
     HANDLE mutex = CreateMutexW(nullptr, TRUE, kInstanceMutex);
     if (!mutex) {
@@ -1202,15 +1197,16 @@ HANDLE AcquireInstanceMutex(int& exitCode)
     if (GetLastError() != ERROR_ALREADY_EXISTS)
         return mutex;
     HWND other = FindWindowW(kHostClass, nullptr);
-    if (other && SameCoreExecutable(other)) {
+    const bool same = other && SameCoreExecutable(other);
+    if (same && !replace) {
         PostMessageW(other, WM_OPEN_SETTINGS, 0, 0);
         CloseHandle(mutex);
         exitCode = 0;
         return nullptr;
     }
     bool replaced = false;
-    if (other && MessageBoxW(nullptr, Tr(L"Atrium is running from another location. Quit it and use the version in this folder?"), L"Atrium",
-                             MB_YESNO | MB_ICONQUESTION | MB_SETFOREGROUND) == IDYES) {
+    if (other && (same || MessageBoxW(nullptr, Tr(L"Atrium is running from another location. Quit it and use the version in this folder?"), L"Atrium",
+                                      MB_YESNO | MB_ICONQUESTION | MB_SETFOREGROUND) == IDYES)) {
         DWORD pid = 0;
         GetWindowThreadProcessId(other, &pid);
         if (HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, pid)) {
@@ -1232,7 +1228,7 @@ HANDLE AcquireInstanceMutex(int& exitCode)
         exitCode = 0;
         return nullptr;
     }
-    Log(L"core: took over from the copy at another location");
+    Log(L"core: took over from %s", same ? L"an existing instance" : L"the copy at another location");
     return mutex;
 }
 
@@ -1291,7 +1287,11 @@ void InitializeSubsystems(HINSTANCE instance, Settings& settings)
     g_app.menu = std::make_unique<GlassMenu>(instance);
     StartJumpListIndex(settings.windowsContextMenu);
     g_app.tasks = std::make_unique<TaskModel>(g_app.host, OnTasksChanged, [](const std::wstring& exe) { return g_app.tray->OpenExisting(exe); });
-    g_app.tasks->SetOnFlash([](HWND window) { MessengerFlashed(ProgramOf(window)); });
+    g_app.tasks->SetOnFlash([](HWND window) {
+        DWORD pid = 0;
+        GetWindowThreadProcessId(window, &pid);
+        MessengerFlashed(ProgramOf(window), pid);
+    });
     g_app.catalog = std::make_unique<AppCatalog>(g_app.host, WM_CATALOG);
     g_app.start = std::make_unique<StartMenu>(instance, *g_app.tasks, *g_app.catalog);
     MakeExtras(instance);
@@ -1311,7 +1311,7 @@ void InitializeSubsystems(HINSTANCE instance, Settings& settings)
     g_app.trayPanel->onSystemTray = OpenTray;
     g_app.trayPanel->SetAttention(g_app.tasks->Snapshot(true));
     g_app.control = std::make_unique<ControlCenter>(instance);
-    g_app.control->onChanged = UpdateStatus;
+    g_app.control->onChanged = UpdateStatus, g_app.control->onStage = SetStageManager;
     g_app.start->onStatusRequest = UpdateStatus;
     g_app.calendar = std::make_unique<CalendarPanel>(instance);
     g_app.widgets = std::make_unique<DesktopWidgets>(instance);
@@ -1326,7 +1326,6 @@ void InitializeSubsystems(HINSTANCE instance, Settings& settings)
     g_app.genie = std::make_unique<GenieMinimize>(instance, GenieIconTarget, [](HWND window) { return g_app.stage && g_app.stage->OwnsMinimize(window); });
     TaskModel::SetWindowSteps([](HWND w, std::function<void()> step) { return g_app.genie && g_app.genie->Minimize(w, std::move(step)); },
                               [](HWND w, std::function<void()> step) { return g_app.genie && g_app.genie->Restore(w, std::move(step)); });
-    g_app.control->onStage = SetStageManager;
     g_app.widgets->onStatusRequest = UpdateStatus;
     g_app.status = std::make_unique<SystemStatusReader>(g_app.host, WM_STATUS, WM_VOLUME);
     g_app.usb = std::make_unique<UsbVolumeMonitor>([host = g_app.host] { PostMessageW(host, WM_USB, 0, 0); });
@@ -1340,7 +1339,8 @@ void InitializeSubsystems(HINSTANCE instance, Settings& settings)
     g_app.notes->barRect = [] { return ActiveBar().BarRect(); };
     g_app.notes->onUnread = [](int n) { ForBars([&](Bar& bar) { bar.SetUnread(n); }); };
     g_app.notes->onActivate = [](const Notice& n) { return RunNoticeAction(NoticeEnv(), n); };
-    g_app.notes->quietIsOurs = [] { return g_app.chrome && g_app.chrome->QuietIsOurs(); };
+    g_app.notes->quietIsOurs = g_app.control->quietIsOurs = [] { return g_app.chrome && g_app.chrome->QuietIsOurs(); };
+    g_app.control->onDnd = [](bool on) { g_app.notes->SetDoNotDisturb(on), ForBars([on](Bar& bar) { bar.SetDoNotDisturb(on); }); };
     g_app.notes->held = BarPopupOpen;
     g_app.preview = std::make_unique<WindowPreview>(instance);
     g_app.ime = std::make_unique<ImeBubble>(instance);
@@ -1423,9 +1423,8 @@ void MakeExtras(HINSTANCE instance)
     g_app.extras = std::make_unique<ExtrasHost>(instance, *g_app.catalog, [](const std::function<void(Bar&)>& each) { ForBars(each); });
     g_app.extras->onPanelsChanged = [] { g_app.notes->PanelsChanged(); };
     g_app.extras->onOpenSettings = [](const wchar_t* page) { OpenSettings(page); };
-    g_app.extras->SetAppMenu(ShowCatalogMenu);
+    g_app.extras->SetAppMenu(ShowCatalogMenu, g_app.menu.get());
 }
-
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
@@ -1444,7 +1443,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
     if (const std::optional<int> code = HandleLaunchCommand(launch))
         return *code;
     int instanceExit = 0;
-    HANDLE mutex = AcquireInstanceMutex(instanceExit);
+    HANDLE mutex = AcquireInstanceMutex(instanceExit, launch.replace);
     if (!mutex)
         return instanceExit;
 

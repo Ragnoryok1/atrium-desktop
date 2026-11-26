@@ -89,6 +89,7 @@ public sealed partial class MainWindow
         }
         if (_mains[index] == MainStage) ShowStagePreview(true);
         if (_mains[index] == MainDisplays) RefreshDisplays();
+        if (_mains[index] == MainSystem) EnsureAdminCard();
         if (index >= 10) EnterModulePage(index);
         else LeaveModulePages();
         ContinuousCorners.Install(_mains[index]);

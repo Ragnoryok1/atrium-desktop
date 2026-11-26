@@ -587,6 +587,14 @@ void Bar::SetUnread(int count)
     Relayout();
 }
 
+void Bar::SetDoNotDisturb(bool on)
+{
+    if (on == dnd_)
+        return;
+    dnd_ = on;
+    Relayout();
+}
+
 void Bar::Publish(bool bar)
 {
     {

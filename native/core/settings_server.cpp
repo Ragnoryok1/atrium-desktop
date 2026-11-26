@@ -2,6 +2,7 @@
 
 #include "localization.h"
 #include "log.h"
+#include "shell/process_integrity.h"
 #include "shell/logon_task.h"
 #include "ui/desktop_widgets.h"
 
@@ -82,7 +83,9 @@ struct PipeSecurity {
             Log(L"pipe: could not resolve user SID for DACL (%lu), using default security", GetLastError());
             return;
         }
-        const std::wstring sddl = L"D:P(A;;GA;;;" + sid + L")(A;;GA;;;SY)(A;;GA;;;BA)";
+        std::wstring sddl = L"D:P(A;;GA;;;" + sid + L")(A;;GA;;;SY)(A;;GA;;;BA)";
+        if (IsElevatedProcess())
+            sddl += L"S:(ML;;NW;;;ME)";
         if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &sd, nullptr)) {
             Log(L"pipe: ConvertStringSecurityDescriptorToSecurityDescriptorW failed (%lu), using default security", GetLastError());
             sd = nullptr;
@@ -361,10 +364,17 @@ std::string SettingsServer::Handle(const std::string& request)
         r.SetNamedValue(L"protocol", json::JsonValue::CreateNumberValue(kProtocol));
         r.SetNamedValue(L"instanceId", json::JsonValue::CreateStringValue(instanceId_));
         r.SetNamedValue(L"revision", json::JsonValue::CreateNumberValue(double(revision)));
+        r.SetNamedValue(L"elevated", json::JsonValue::CreateBooleanValue(IsElevatedProcess()));
         r.SetNamedValue(L"saved", json::JsonObject::Parse(saved.ToJson()));
         r.SetNamedValue(L"current", json::JsonObject::Parse(current.ToJson()));
         r.SetNamedValue(L"path", json::JsonValue::CreateStringValue(EffectiveSettingsPath()));
         return Narrow(std::wstring(r.Stringify()));
+    }
+    if (op == L"quit") {
+        if (!host_)
+            return Reply(L"error", L"no host window");
+        PostMessageW(host_, WM_CLOSE, 0, 0);
+        return Reply(L"ok");
     }
     if (op == L"cancel") {
         Log(L"pipe: cancel, back to the saved settings");

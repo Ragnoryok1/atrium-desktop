@@ -476,6 +476,7 @@ public sealed partial class MainWindow : Window, IDisposable
                     ? Loc.T("The core is still running; the settings connection closed")
                     : Loc.T("Closed; Windows' taskbar is back"));
         }
+        RefreshAdminCard();
     }
 
     private void ShowMessage(InfoBarSeverity severity, string title, string message)
@@ -528,7 +529,8 @@ public sealed partial class MainWindow : Window, IDisposable
             _coreProcess = process;
             process.Exited += (_, _) => DispatcherQueue.TryEnqueue(() =>
             {
-                if (_coreProcess != process) return;
+                if (_coreProcess != process)
+                    return;
                 _client.Disconnect(coreStopped: true);
                 _coreProcess.Dispose();
                 _coreProcess = null;
@@ -536,6 +538,7 @@ public sealed partial class MainWindow : Window, IDisposable
             });
             process.EnableRaisingEvents = true;
         }
+        catch (System.ComponentModel.Win32Exception) { DetachCoreProcess(); }
         catch (ArgumentException) { _client.Disconnect(coreStopped: true); }
     }
 
@@ -558,14 +561,11 @@ public sealed partial class MainWindow : Window, IDisposable
             }
             else
             {
+                bool sentQuit = _client.Connected && await _client.QuitCoreAsync();
                 _client.Disconnect();
                 WatchCore();
-                using var quit = Process.Start(new ProcessStartInfo(exe, "--exit") { UseShellExecute = false, CreateNoWindow = true })
-                    ?? throw new InvalidOperationException(Loc.T("Could not send the quit request."));
-                using var waitTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                try { await quit.WaitForExitAsync(waitTimeout.Token); }
-                catch (OperationCanceledException) { throw new TimeoutException(Loc.T("Atrium has not quit yet. Try again later.")); }
-                if (quit.ExitCode != 0) throw new InvalidOperationException(Loc.T("Atrium has not quit yet. Try again later."));
+                if (!await WaitForCoreExitAsync(exe, sentQuit))
+                    throw new InvalidOperationException(Loc.T("Atrium has not quit yet. Try again later."));
                 _client.Disconnect(coreStopped: true);
             }
         }
@@ -685,6 +685,8 @@ public sealed partial class MainWindow : Window, IDisposable
         RemoteVisibleSwitch.IsOn = CurrentSettings.RemoteVisible;
         (CurrentSettings.StatusStyle == "icons" ? StatusIcons : StatusRing).IsChecked = true;
         (CurrentSettings.AutoHide switch { "never" => HideNever, "always" => HideAlways, _ => HideFullscreen }).IsChecked = true;
+        BarDodgeSwitch.IsOn = CurrentSettings.BarDodge;
+        BarDodgeSwitch.Visibility = CurrentSettings.AutoHide != "always" ? Visibility.Visible : Visibility.Collapsed;
         BarReserveSwitch.IsOn = CurrentSettings.BarReserve;
         BarFullscreenHideSwitch.IsOn = CurrentSettings.BarFullscreenHide;
         VisibleOptions.Visibility = CurrentSettings.AutoHide == "never" ? Visibility.Visible : Visibility.Collapsed;
@@ -693,11 +695,7 @@ public sealed partial class MainWindow : Window, IDisposable
         string currentLanguage = CurrentSettings.Language == "zh" ? "zh-Hans" : CurrentSettings.Language;
         LanguagePicker.SelectedIndex = 0;
         for (int i = 0; i < LanguagePicker.Items.Count; i++)
-        {
-            if (LanguagePicker.Items[i] is ComboBoxItem item && (item.Tag as string) == currentLanguage)
-                LanguagePicker.SelectedIndex = i;
-        }
-
+            if (LanguagePicker.Items[i] is ComboBoxItem item && (item.Tag as string) == currentLanguage) LanguagePicker.SelectedIndex = i;
         LoadDisplayControls();
         (CurrentSettings.TextColor switch { "light" => TextLight, "dark" => TextDark, _ => TextAuto }).IsChecked = true;
         UpdateGallery();
@@ -1049,43 +1047,44 @@ public sealed partial class MainWindow : Window, IDisposable
         CurrentSettings.RemoteVisible = RemoteVisibleSwitch.IsOn;
         Changed();
     }
-
     private void OnStatusStyleChecked(object sender, RoutedEventArgs e)
     {
         if (_loading || sender is not RadioButton { Tag: string tag }) return;
         CurrentSettings.StatusStyle = tag;
         Changed();
     }
-
     private void OnAutoHideChecked(object sender, RoutedEventArgs e)
     {
         if (_loading || sender is not RadioButton { Tag: string tag }) return;
         CurrentSettings.AutoHide = tag;
+        BarDodgeSwitch.Visibility = tag != "always" ? Visibility.Visible : Visibility.Collapsed;
         VisibleOptions.Visibility = tag == "never" ? Visibility.Visible : Visibility.Collapsed;
         Changed();
     }
-
+    private void OnBarDodgeToggled(object sender, RoutedEventArgs e)
+    {
+        if (_loading) return;
+        CurrentSettings.BarDodge = BarDodgeSwitch.IsOn;
+        Changed();
+    }
     private void OnBarReserveToggled(object sender, RoutedEventArgs e)
     {
         if (_loading) return;
         CurrentSettings.BarReserve = BarReserveSwitch.IsOn;
         Changed();
     }
-
     private void OnBarFullscreenHideToggled(object sender, RoutedEventArgs e)
     {
         if (_loading) return;
         CurrentSettings.BarFullscreenHide = BarFullscreenHideSwitch.IsOn;
         Changed();
     }
-
     private void OnBarEdgeChecked(object sender, RoutedEventArgs e)
     {
         if (_loading || sender is not RadioButton { Tag: string tag }) return;
         CurrentSettings.BarEdge = tag;
         Changed();
     }
-
     private void OnTextColorChecked(object sender, RoutedEventArgs e)
     {
         if (_loading || sender is not RadioButton { Tag: string tag }) return;
@@ -1292,7 +1291,6 @@ public sealed partial class MainWindow : Window, IDisposable
         args.Cancel = true;
         await CloseRequestedAsync();
     }
-
     // Window.Close does not raise AppWindow.Closing. Both the title-bar close
     // and update button explicitly use the same save/exit path before calling it.
     private async Task CloseRequestedAsync()

@@ -189,6 +189,7 @@ private:
     void PutDown(HWND window, bool fly); // minimizes a window put away, once; its picture flies to the strip
     Set SetOf(const std::wstring& key) const; // the set in the strip `key` belongs to, or just it
     void Prune();
+    bool IsHigherIntegrity(HWND window, const std::wstring& appKey);
     void ReleaseUp();          // the stage's windows get their own minimize animation back
     bool AdoptMinimized();     // the stage's apps whose windows were all minimized go to the strip
     bool NeedsAdopt(ULONGLONG now) const;
@@ -349,6 +350,7 @@ private:
     StageOpenIntent openIntent_;
     std::vector<HWND> excludedWindows_; // windows of excluded apps: never staged, still covering the strip
     std::vector<std::wstring> excluded_ = DefaultStageExcluded();
+    std::unordered_set<HWND> higherIntegrityLogged_;
 
     std::vector<Entry> entries_;
     std::vector<Entry> leaving_;       // cards fading out (picked, or their windows gone)

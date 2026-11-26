@@ -1,7 +1,6 @@
 #include "ui/notifications.h"
 
 #include "localization.h"
-
 #include "clock.h"
 #include "log.h"
 #include "motion.h"
@@ -18,7 +17,6 @@
 #include <cmath>
 
 namespace atrium {
-
 namespace {
 
 constexpr float kW = 384, kGap = 10, kPeek = 10, kPill = 44;
@@ -192,6 +190,8 @@ int Notifications::Unread() const { return int(std::ranges::count_if(notices_, &
 
 int Notifications::QuietState() const
 {
+    if (dnd_)
+        return QUNS_QUIET_TIME;
     QUERY_USER_NOTIFICATION_STATE state = QUNS_ACCEPTS_NOTIFICATIONS;
     if (FAILED(SHQueryUserNotificationState(&state)))
         return QUNS_ACCEPTS_NOTIFICATIONS;
@@ -246,29 +246,29 @@ void Notifications::Post(Notice n, bool silent)
     // Repeats of the listener's notices, and bursts of the same title from one
     // app, become one card with a count.
     for (auto it = notices_.begin(); it != notices_.end(); ++it) {
-        bool sameExternal = n.externalId && notification::HasExternalId(*it, n.externalId) && it->source == n.source;
-        bool burst =
-            it->source == n.source && FoldCase(it->appId) == FoldCase(n.appId) && it->app == n.app && it->title == n.title && n.time - it->time < kMergeMs;
+        const bool sameExternal = n.externalId && notification::HasExternalId(*it, n.externalId) && it->source == n.source;
+        const bool burst = (!it->pid || !n.pid || it->pid == n.pid) && it->source == n.source && FoldCase(it->appId) == FoldCase(n.appId) && it->app == n.app &&
+                           it->title == n.title && n.time - it->time < kMergeMs;
         if (sameExternal && it->title == n.title && it->body == n.body)
-            return; // seen already
-        if (sameExternal || burst) {
-            Notice merged = *it;
-            if (sameExternal)
-                merged.title = n.title;
-            else
-                merged.count += 1;
-            notification::AddExternalId(merged, n.externalId);
-            merged.body = n.body;
-            if (!sameExternal && !n.action.empty())
-                merged.action = n.action;
-            merged.time = n.time;
-            merged.unread = true;
-            ShiftStack(Mode::Center, size_t(it - notices_.begin()), -1);
-            notices_.erase(it);
-            n = merged;
-            Log(sameExternal ? L"notify: %llu updated by its sender" : L"notify: merged into %llu (x%d)", n.id, n.count);
-            break;
-        }
+            return;
+        if (!sameExternal && !burst)
+            continue;
+        Notice merged = *it;
+        if (sameExternal)
+            merged.title = n.title;
+        else
+            merged.count += 1;
+        notification::AddExternalId(merged, n.externalId);
+        merged.body = n.body, merged.time = n.time, merged.unread = true;
+        if (!merged.pid)
+            merged.pid = n.pid;
+        if (merged.trayHostKey.empty())
+            merged.trayHostKey = n.trayHostKey;
+        if (!sameExternal && !n.action.empty())
+            merged.action = n.action;
+        ShiftStack(Mode::Center, size_t(it - notices_.begin()), -1), notices_.erase(it), n = merged;
+        Log(sameExternal ? L"notify: %llu updated by its sender" : L"notify: merged into %llu (x%d)", n.id, n.count);
+        break;
     }
     if (!n.id)
         n.id = nextId_++;

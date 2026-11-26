@@ -147,6 +147,40 @@ void CheckTopmostCoverPolicy()
     Require(!ShouldIgnoreTopmostCover(L"CustomApp", WS_POPUP, WS_EX_APPWINDOW | WS_EX_TOOLWINDOW, true, true), "WS_EX_APPWINDOW is not ignored");
     Require(!ShouldIgnoreTopmostCover(L"OverlappedApp", WS_OVERLAPPEDWINDOW, WS_EX_TOOLWINDOW, true, true), "non-popup window is not ignored");
 }
+
+void CheckBarReserve()
+{
+    Require(BarReservePx(60, 0) == 60, "zero margin reserves only bar height");
+    Require(BarReservePx(60, 10) == 80, "non-zero margin keeps symmetric inner and outer gaps");
+
+    const int winW = 600, barH = 60, margin = 10, insetTop = 18, inset = 14, winH = barH + insetTop + inset;
+    const int reserve = BarReservePx(barH, margin);
+    for (BarEdge edge : {BarEdge::Bottom, BarEdge::Top, BarEdge::Left, BarEdge::Right}) {
+        const RECT work = ShortenEdge(kScreen, edge, reserve);
+        const RECT win = PlaceBarWindow({edge, kScreen, work, winW, winH, barH, margin, insetTop, true, 0});
+        const RECT glass = GlassBand(edge, win, winW, insetTop, barH);
+        const LONG sign = (edge == BarEdge::Top || edge == BarEdge::Left) ? 1 : -1;
+        const LONG outerGap = sign * (OuterEdge(glass, edge) - OuterEdge(kScreen, edge));
+        const LONG workEdge = OuterEdge(work, edge);
+        const BarEdge innerSide = edge == BarEdge::Bottom ? BarEdge::Top :
+                                  edge == BarEdge::Top    ? BarEdge::Bottom :
+                                  edge == BarEdge::Left   ? BarEdge::Right :
+                                                            BarEdge::Left;
+        const LONG innerGap = sign * (workEdge - OuterEdge(glass, innerSide));
+        Require(outerGap == margin && innerGap == margin, "reserved work area leaves equal margin on outer and inner edges of the bar");
+    }
+}
+
+void CheckDodgeOverlap()
+{
+    const RECT barZone{660, 1010, 1260, 1080};
+    Require(WindowOverlapsBar(RECT{700, 500, 1100, 1050}, barZone), "window overlapping the bar triggers dodge");
+    Require(WindowOverlapsBar(RECT{-200, 900, 700, 1060}, barZone), "window straddling from another monitor onto the bar triggers dodge");
+    Require(!WindowOverlapsBar(RECT{600, 200, 1400, 1010}, barZone), "window ending right at the bar inner edge does not trigger dodge");
+    Require(!WindowOverlapsBar(RECT{100, 500, 660, 1070}, barZone), "window ending right at the bar left edge does not trigger dodge");
+    Require(!WindowOverlapsBar(RECT{1260, 500, 1800, 1070}, barZone), "window starting right at the bar right edge does not trigger dodge");
+    Require(!WindowOverlapsBar(RECT{100, 100, 600, 800}, barZone), "window elsewhere on screen does not trigger dodge");
+}
 } // namespace
 
 int main()
@@ -158,6 +192,8 @@ int main()
         CheckEdgeOf();
         CheckBarWindowPlacement();
         CheckTopmostCoverPolicy();
+        CheckBarReserve();
+        CheckDodgeOverlap();
     } catch (const std::exception& e) {
         std::cerr << e.what() << '\n';
         return 1;

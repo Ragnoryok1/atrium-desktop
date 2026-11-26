@@ -174,6 +174,13 @@ struct TrayHostYieldPolicy {
     }
 };
 
+struct FlashingTrayIcon {
+    std::wstring hostKey, exe, tip;
+    DWORD pid = 0;
+    HWND hwnd = nullptr;
+    bool operator==(const FlashingTrayIcon&) const = default;
+};
+
 struct HostIcon {
     std::wstring key;  // "guid:{...}" or "hwnd:<hwnd>:<uid>"
     HWND hwnd = nullptr;
@@ -209,6 +216,7 @@ public:
     // The programs whose icon flashes now: QQ and WeChat flash theirs for a new message (they
     // have no window to flash while they sit in the tray).
     std::vector<std::wstring> Flashing() const;
+    std::vector<FlashingTrayIcon> FlashingIcons() const;
     // Sends the shell's notifications for `action` on `key` at the screen point `at`
     // (the panel's pointer). False when the app cannot be told (gone, no callback,
     // an elevated app's window refusing Atrium's messages).

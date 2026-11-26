@@ -1,7 +1,9 @@
 #include "shell/usb_volume.h"
 
 #include "log.h"
+#include "win32_path.h"
 
+#include <shellapi.h>
 #include <winioctl.h>
 
 #include <cstddef>
@@ -55,8 +57,20 @@ std::optional<UsbVolumeSnapshot> ReadUsbVolumeSnapshot()
             continue;
         UsbVolume volume;
         wchar_t name[MAX_PATH + 1]{};
-        if (GetVolumeInformationW(root.c_str(), name, MAX_PATH + 1, nullptr, nullptr, nullptr, nullptr, 0))
-            volume.label = name;
+        if (GetVolumeInformationW(root.c_str(), name, MAX_PATH + 1, nullptr, nullptr, nullptr, nullptr, 0)) {
+            volume.labelRead = true;
+            volume.label = SanitizeUsbVolumeLabel(name);
+            if (name[0] != L'\0' && volume.label.empty()) {
+                SHFILEINFOW sfi{};
+                if (SHGetFileInfoW(root.c_str(), 0, &sfi, sizeof(sfi), SHGFI_DISPLAYNAME) && sfi.szDisplayName[0]) {
+                    std::wstring fallback = StripInvisibleUiChars(sfi.szDisplayName);
+                    const std::wstring suffix = L"(" + std::wstring(1, letter) + L":)";
+                    if (fallback.ends_with(suffix))
+                        fallback.resize(fallback.size() - suffix.size());
+                    volume.label = SanitizeUsbVolumeLabel(fallback);
+                }
+            }
+        }
         wchar_t identity[MAX_PATH + 1]{};
         if (GetVolumeNameForVolumeMountPointW(root.c_str(), identity, MAX_PATH + 1))
             volume.identity = identity;
@@ -94,7 +108,7 @@ std::vector<RemovedVolume> UsbVolumes::Sync(const UsbVolumeSnapshot& snapshot)
         auto& cached = watched_[letter];
         if (!volume.identity.empty())
             cached.identity = volume.identity;
-        if (!volume.label.empty())
+        if (volume.labelRead || !volume.label.empty())
             cached.label = volume.label;
     }
     return removed;

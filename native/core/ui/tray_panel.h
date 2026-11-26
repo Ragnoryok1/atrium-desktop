@@ -73,11 +73,13 @@ private:
     void HideTip();
     void HoverAt(POINT pt);
     void LeaveHover();
+    bool HasAttention(const TrayIcon& icon) const;
 
     Surface surface_;
     TrayModel& model_;
     std::vector<TrayIcon> icons_;
     std::vector<std::wstring> attention_;
+    std::vector<DWORD> attentionPids_;
     std::vector<Hit> hits_;
     std::wstring hover_, pressed_;
     HWND tip_ = nullptr;            // the standard tooltip, as the system tray shows it

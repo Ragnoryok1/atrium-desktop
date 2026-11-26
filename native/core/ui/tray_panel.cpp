@@ -120,6 +120,13 @@ bool FollowCancelKeyDown()
     return std::ranges::any_of(kKeys, [](int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; });
 }
 
+bool FollowExeAllowed(DWORD pid, const std::wstring& path)
+{
+    if (g_follow.exe.empty() || path.empty() || CompareStringOrdinal(path.c_str(), -1, g_follow.exe.c_str(), -1, TRUE) != CSTR_EQUAL)
+        return false;
+    return g_follow.menu || g_follow.pid == 0 || pid == g_follow.pid;
+}
+
 void CALLBACK MenuShown(HWINEVENTHOOK, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD, DWORD)
 {
     if (event != EVENT_OBJECT_SHOW && event != EVENT_OBJECT_LOCATIONCHANGE)
@@ -164,7 +171,7 @@ void CALLBACK MenuShown(HWINEVENTHOOK, DWORD event, HWND hwnd, LONG idObject, LO
         }
         CloseHandle(process);
     }
-    if (g_follow.exe.empty() || path.empty() || elevated || CompareStringOrdinal(path.c_str(), -1, g_follow.exe.c_str(), -1, TRUE) != CSTR_EQUAL)
+    if (elevated || !FollowExeAllowed(pid, path))
         return;
     wchar_t cls[64]{};
     if (!GetClassNameW(hwnd, cls, 64))
@@ -223,7 +230,7 @@ void CALLBACK MenuShown(HWINEVENTHOOK, DWORD event, HWND hwnd, LONG idObject, LO
         StopFollow();
 }
 
-void FollowMenu(POINT at, const std::wstring& exe)
+void FollowMenu(POINT at, const std::wstring& exe, DWORD preferredPid)
 {
     StopFollow();
     if (exe.empty() || _wcsicmp(PathFindFileNameW(exe.c_str()), L"explorer.exe") == 0)
@@ -231,10 +238,7 @@ void FollowMenu(POINT at, const std::wstring& exe)
     LASTINPUTINFO input{sizeof(input)};
     if (!GetLastInputInfo(&input))
         return;
-    g_follow.clickInput = input.dwTime;
-    g_follow.at = at;
-    g_follow.exe = exe;
-    g_follow.until = GetTickCount64() + 3000; // slow apps take a while to show it
+    g_follow.clickInput = input.dwTime, g_follow.at = at, g_follow.exe = exe, g_follow.pid = preferredPid, g_follow.until = GetTickCount64() + 3000;
     g_follow.hook = SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_LOCATIONCHANGE, nullptr, MenuShown, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
     if (g_follow.hook)
         g_follow.timer = SetTimer(nullptr, 0, 3000, FollowExpired);
@@ -505,13 +509,25 @@ void TrayPanel::LeaveHover()
 void TrayPanel::SetAttention(const std::vector<TaskItem>& tasks)
 {
     std::vector<std::wstring> next;
-    for (const auto& task : tasks)
-        if (task.attention)
-            next.push_back(task.key);
-    if (next != attention_) {
-        attention_ = std::move(next);
-        surface_.Invalidate();
+    std::vector<DWORD> nextPids;
+    for (const auto& task : tasks) {
+        if (!task.attention)
+            continue;
+        next.push_back(task.key);
+        for (DWORD pid = 0; HWND w : task.windows)
+            if (GetWindowThreadProcessId(w, &pid) && pid && std::ranges::find(nextPids, pid) == nextPids.end())
+                nextPids.push_back(pid);
     }
+    if (next != attention_ || nextPids != attentionPids_)
+        attention_ = std::move(next), attentionPids_ = std::move(nextPids), surface_.Invalidate();
+}
+
+bool TrayPanel::HasAttention(const TrayIcon& icon) const
+{
+    if (icon.flashing)
+        return true;
+    return icon.pid ? std::ranges::find(attentionPids_, icon.pid) != attentionPids_.end() :
+                      (!icon.exe.empty() && std::ranges::find(attention_, icon.exe) != attention_.end());
 }
 
 float TrayPanel::Hover(Canvas& c, const std::wstring& id, bool on)
@@ -583,8 +599,8 @@ void TrayPanel::Paint(Canvas& c)
         }
         c.EndGroup();
         c.EndGroup();
-        // Only an existing task attention signal for the exact executable. No guessed unread count.
-        if (icon.flashing || (!icon.exe.empty() && std::ranges::find(attention_, icon.exe) != attention_.end())) {
+        // Only an existing task attention signal for this instance/executable. No guessed unread count.
+        if (HasAttention(icon)) {
             const float pulse = 0.72f + 0.28f * float(std::sin((c.now - openedMs_) * 0.006));
             c.Fill(D2D1::RectF(ir.right - 3, ir.top - 3, ir.right + 4, ir.top + 4), 3.5f, D2D1::ColorF(0.96f, 0.22f, 0.25f, pulse));
             c.Continue();
@@ -641,30 +657,28 @@ void TrayPanel::Activate(const std::wstring& id, bool right)
     if (right) {
         POINT at;
         GetCursorPos(&at);
-        FollowMenu(at, selected.exe);
-    }
-    if (!right) {
-        POINT at{};
-        GetCursorPos(&at);
-        const bool second = lastClick_ && tray::SameGestureTarget(lastClick_->Target(), selected.Target()) &&
-                            GetTickCount64() - lastWhen_ <= GetDoubleClickTime() && std::abs(at.x - lastAt_.x) <= GetSystemMetrics(SM_CXDOUBLECLK) / 2 &&
-                            std::abs(at.y - lastAt_.y) <= GetSystemMetrics(SM_CYDOUBLECLK) / 2;
-        if (second) {
-            model_.DoubleClick(selected, true, cell); // first click already delivered
-            lastClick_.reset();
-            Close(); // the panel has done its part
-        } else {
-            model_.Click(selected, false, cell); // immediate; no double-click timer
-            lastClick_ = selected;
-            lastAt_ = at;
-            lastWhen_ = GetTickCount64();
-            // Some apps open only on a double click: the panel waits for the second one.
-            SetTimer(surface_.Hwnd(), kClickTimer, GetDoubleClickTime(), nullptr);
-        }
+        FollowMenu(at, selected.exe, selected.pid);
+        lastClick_.reset();
+        model_.Click(selected, true, cell);
         return;
     }
-    lastClick_.reset();
-    model_.Click(selected, right, cell);
+    POINT at{};
+    GetCursorPos(&at);
+    const bool second = lastClick_ && tray::SameGestureTarget(lastClick_->Target(), selected.Target()) &&
+                        GetTickCount64() - lastWhen_ <= GetDoubleClickTime() && std::abs(at.x - lastAt_.x) <= GetSystemMetrics(SM_CXDOUBLECLK) / 2 &&
+                        std::abs(at.y - lastAt_.y) <= GetSystemMetrics(SM_CYDOUBLECLK) / 2;
+    if (second) {
+        model_.DoubleClick(selected, true, cell); // first click already delivered
+        lastClick_.reset();
+        Close(); // the panel has done its part
+    } else {
+        model_.Click(selected, false, cell); // immediate; no double-click timer
+        lastClick_ = selected;
+        lastAt_ = at;
+        lastWhen_ = GetTickCount64();
+        // Some apps open only on a double click: the panel waits for the second one.
+        SetTimer(surface_.Hwnd(), kClickTimer, GetDoubleClickTime(), nullptr);
+    }
 }
 
 bool TrayPanel::Message(UINT m, WPARAM w, LPARAM l, LRESULT& result)

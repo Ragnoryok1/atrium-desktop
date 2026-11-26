@@ -114,4 +114,8 @@ inline RECT PlaceBarWindow(const BarPlacement& p)
     return frame.ToArea(RECT{x, y, x + p.winW, y + p.winH});
 }
 
+// Always-shown taskbar with "keep room for windows" reserves `margin + barH + margin`
+// so the inner gap between maximized windows and the bar equals the outer screen margin.
+constexpr int BarReservePx(int barH, int margin) { return barH + 2 * std::max(0, margin); }
+
 } // namespace atrium

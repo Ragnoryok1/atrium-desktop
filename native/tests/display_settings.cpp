@@ -266,9 +266,10 @@ void CheckExtrasSettings()
 
     Settings modules;
     Require(modules.controlModules == std::vector<std::wstring>{L"stage"}, "controlModules defaults to Stage Manager");
-    modules.controlModules = {L" darkmode ", L"wifi", L"stage", L"darkmode", L"", L"hotspot"};
+    modules.controlModules = {L" darkmode ", L"wifi", L"stage", L"dnd", L"darkmode", L"", L"airplane", L"hotspot"};
     modules.Clamp();
-    Require(modules.controlModules == std::vector<std::wstring>{L"darkmode", L"stage", L"hotspot"}, "controlModules keeps known modules once, in order");
+    Require(modules.controlModules == std::vector<std::wstring>{L"darkmode", L"stage", L"dnd", L"airplane", L"hotspot"},
+            "controlModules keeps known modules once, in order");
     modules.controlModules = {L"nightlight", L"stage", L"darkmode"};
     modules.Clamp();
     Require(modules.controlModules == std::vector<std::wstring>{L"darkmode", L"stage"}, "controlModules: night light is dark mode now");

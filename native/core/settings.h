@@ -15,7 +15,7 @@
 namespace atrium {
 
 // The control centre's optional modules (controlModules), in the settings app's order.
-inline constexpr const wchar_t* kControlModules[] = {L"stage", L"energysaver", L"darkmode", L"hotspot"};
+inline constexpr const wchar_t* kControlModules[] = {L"stage", L"energysaver", L"darkmode", L"hotspot", L"dnd", L"airplane"};
 
 struct Settings {
     static constexpr int kVersion = 2; // 2: Windows notifications on by default (v1 files are migrated)
@@ -80,9 +80,10 @@ struct Settings {
     // auto follows Windows' UI language (Chinese -> zh, anything else -> en).
     std::wstring language = L"auto"; // auto | zh | en
     std::wstring textColor = L"auto"; // auto | light | dark
-    // When the bar steps out of the way: never | fullscreen (a maximized or full-screen app is in
-    // front) | always (it waits below the screen's bottom edge). The pointer there brings it up.
+    // When the bar steps out of the way: never | fullscreen (a maximized or full-screen app is in front) | always (waits at the screen edge).
+    // The pointer at the edge brings it up. With barDodge (not in always), any overlapping non-transient window also hides it.
     std::wstring autoHide = L"fullscreen";
+    bool barDodge = false;           // always or fullscreen: also hide whenever any window overlaps the bar
     bool barReserve = true;          // always shown: the bar keeps its strip of the screen, maximized windows end before it (#40, #129)
     bool barFullscreenHide = true;   // always shown: a full-screen app in front (a video, F11) has the screen, the bar goes (#134)
     std::wstring barEdge = L"bottom"; // bottom | top | left | right

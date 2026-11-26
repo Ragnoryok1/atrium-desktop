@@ -238,6 +238,63 @@ void TestElevatedGuidAndConcatenatedTips()
     Check(secMatch.items.size() == 1 && secMatch.items[0].record == 0 && secMatch.items[0].method == Method::Name,
           "T5: KnownShellTray Windows Security alias matches concatenated UIA tooltip");
 }
+void TestNvidiaContainerIcons()
+{
+    const auto dm = KnownShellTray(L"{7120A42D-CB02-4A51-B3B5-58E36E8B14E1}");
+    const auto dmLegacy = KnownShellTray(L"guid:{d68540cc-e0d8-4298-b55c-e6e324121f77}");
+    const auto gpu = KnownShellTray(L"guid:{d36b22a6-995e-4340-8339-3de08c6840df}");
+    Check(dm && dmLegacy && dm->iconDll == nullptr && dm->aliases == dmLegacy->aliases && dm->aliases.front() == L"管理显示模式",
+          "KnownShellTray maps NVIDIA Manage Display Mode GUIDs");
+    Check(gpu && gpu->iconDll == nullptr && gpu->aliases.front() == L"NVIDIA GPU 活动", "KnownShellTray maps NVIDIA GPU Activity GUID");
+
+    auto makeNvRecord = [](const std::wstring& id, const std::wstring& exe, const std::wstring& tip, const std::wstring& identity, size_t order) {
+        Record r;
+        r.id = id;
+        r.exe = exe;
+        r.tip = tip;
+        r.identity = identity;
+        r.live = true;
+        r.order = order;
+        r.names = {tip, L"NVIDIA Container", L"NVIDIA Container", L"nvcontainer"};
+        if (const auto known = KnownShellTray(identity))
+            r.names.insert(r.names.end(), known->aliases.begin(), known->aliases.end());
+        r.firstTitle = r.names.size();
+        return r;
+    };
+    const Record settings =
+        makeNvRecord(L"16133554932753985167", L"c:\\windows\\system32\\driverstore\\nvdisplay.container.exe", L"NVIDIA 设置", L"uid:4560:1234:1051", 94);
+    const Record displayMode = makeNvRecord(L"4834343228493306829", L"c:\\program files\\nvidia corporation\\nvcontainer\\nvcontainer.exe", L"",
+                                            L"guid:{7120A42D-CB02-4A51-B3B5-58E36E8B14E1}", 100);
+    const Record gpuActivity = makeNvRecord(L"13289861806036237432", L"c:\\program files\\nvidia corporation\\nvcontainer\\nvcontainer.exe", L"",
+                                            L"guid:{D36B22A6-995E-4340-8339-3DE08C6840DF}", 114);
+    Check(FallbackRecordTip(displayMode) == L"管理显示模式", "FallbackRecordTip uses Manage Display Mode alias instead of NVIDIA Container");
+    Check(FallbackRecordTip(gpuActivity) == L"NVIDIA GPU 活动", "FallbackRecordTip uses GPU Activity alias instead of NVIDIA Container");
+
+    const auto zh = Match(
+        {
+            {L"NVIDIA 设置", false},
+            {L"管理显示模式", false},
+            {L"NVIDIA GeForce RTX 4060 Laptop GPU（0 个显示器，3 个程序）  NVIDIA GeForce RTX 4060 Laptop GPU（0 个显示器，17 个程序）", false},
+        },
+        {settings, displayMode, gpuActivity});
+    Check(zh.items.size() == 3 && zh.items[0].record == 0 && zh.items[1].record == 1 && zh.items[2].record == 2 && zh.items[0].method == Method::Name &&
+              zh.items[1].method == Method::Name && zh.items[2].method == Method::Name,
+          "all 3 Chinese NVIDIA tray buttons pair with their live records with zero duplicate ghosts");
+
+    Record enSettings = settings;
+    enSettings.tip = L"NVIDIA Settings";
+    enSettings.names[0] = L"NVIDIA Settings";
+    const auto en = Match(
+        {
+            {L"NVIDIA Settings", false},
+            {L"Manage Display Mode", false},
+            {L"NVIDIA RTX A2000 (1 display, 2 programs)", false},
+        },
+        {enSettings, displayMode, gpuActivity});
+    Check(en.items.size() == 3 && en.items[0].record == 0 && en.items[1].record == 1 && en.items[2].record == 2 && en.items[0].method == Method::Name &&
+              en.items[1].method == Method::Name && en.items[2].method == Method::Name,
+          "English NVIDIA tray buttons match cleanly without colliding with NVIDIA Settings");
+}
 int main()
 {
     try {
@@ -300,6 +357,7 @@ int main()
         TestOrderAndDedup();
         TestAttachRemainingAndMultiInstance();
         TestElevatedGuidAndConcatenatedTips();
+        TestNvidiaContainerIcons();
         std::cout << "tray matching: all scenarios passed\n";
     } catch (const std::exception& e) {
         std::cerr << e.what() << '\n';
