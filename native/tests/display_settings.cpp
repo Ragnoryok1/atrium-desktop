@@ -11,16 +11,20 @@
 #include <winrt/Windows.Foundation.h>
 #include <algorithm>
 #include <iostream>
-#include <stdexcept>
 #include <string_view>
 
 using namespace atrium;
 
 namespace {
-void Require(bool condition, const char* message)
+bool g_failed = false;
+
+bool Require(bool condition, const char* message)
 {
-    if (!condition)
-        throw std::runtime_error(message);
+    if (condition)
+        return true;
+    std::cerr << message << '\n';
+    g_failed = true;
+    return false;
 }
 
 void CheckClockAndBadgeSettings(Settings& settings, Settings& parsed)
@@ -328,7 +332,7 @@ void CheckTaskDistribution()
     auto local = TaskItemsForDisplay(items, L"primaryAndWindow", false, external, first, monitorOf);
     Require(local.size() == 3 && local[0].windows.empty() && !local[0].active && !local[0].attention && local[0].badge == 5,
             "remote pins stay without running or active indicators, keeping their badge");
-    Require(local[1].windows == std::vector<HWND>{second} && !local[1].active, "window previews only include local windows");
+    Require(local.size() >= 2 && local[1].windows == std::vector<HWND>{second} && !local[1].active, "window previews only include local windows");
     local = TaskItemsForDisplay(items, L"window", true, primary, first, monitorOf);
     Require(local.size() == 2 && local[1].windows == std::vector<HWND>{first} && local[1].active, "window-only mode also filters the primary taskbar");
     auto moved = TaskItemsForDisplay(items, L"window", false, external, second, [&](HWND) { return external; });
@@ -590,7 +594,7 @@ void CheckNotificationWithdrawAndMerge()
     Require(notification::WithdrawNotice(wechat, wechatWithdraw), "title-based withdraw still removes matching card");
 }
 
-void RunNormalizer()
+bool RunNormalizer()
 {
     namespace json = winrt::Windows::Data::Json;
     std::string line;
@@ -600,15 +604,19 @@ void RunNormalizer()
         if (line.empty())
             continue;
         json::JsonObject obj{nullptr};
-        Require(json::JsonObject::TryParse(Utf8ToWide(line), obj), "valid ndjson line");
+        if (!Require(json::JsonObject::TryParse(Utf8ToWide(line), obj), "valid ndjson line"))
+            return false;
         Settings base;
-        if (obj.HasKey(L"base") && obj.GetNamedValue(L"base").ValueType() == json::JsonValueType::Object)
-            Require(Settings::FromJson(std::wstring(obj.GetNamedObject(L"base").Stringify()), Settings{}, base), "valid base");
+        if (obj.HasKey(L"base") && obj.GetNamedValue(L"base").ValueType() == json::JsonValueType::Object) {
+            if (!Require(Settings::FromJson(std::wstring(obj.GetNamedObject(L"base").Stringify()), Settings{}, base), "valid base"))
+                return false;
+        }
         std::wstring patchText;
         if (obj.HasKey(L"patchText") && obj.GetNamedValue(L"patchText").ValueType() == json::JsonValueType::String) {
             patchText = std::wstring(obj.GetNamedString(L"patchText"));
         } else {
-            Require(obj.HasKey(L"patch") && obj.GetNamedValue(L"patch").ValueType() == json::JsonValueType::Object, "patch object required");
+            if (!Require(obj.HasKey(L"patch") && obj.GetNamedValue(L"patch").ValueType() == json::JsonValueType::Object, "patch object required"))
+                return false;
             patchText = std::wstring(obj.GetNamedObject(L"patch").Stringify());
         }
         Settings out;
@@ -618,6 +626,7 @@ void RunNormalizer()
             std::cout << R"({"ok":false})" << '\n';
         std::cout.flush();
     }
+    return true;
 }
 
 StackWindow MakeStackWin(uintptr_t id, const wchar_t* cls, RECT r, bool caption = true, bool topmost = false)
@@ -663,28 +672,24 @@ void CheckWidgetStacking()
 
 int main(int argc, char** argv)
 {
-    try {
-        winrt::init_apartment();
-        if (std::any_of(argv + 1, argv + argc, [](const char* arg) { return std::string_view(arg) == "--normalize"; })) {
-            RunNormalizer();
-            return 0;
-        }
-        CheckSettings();
-        CheckStageDragMerge();
-        CheckSettingsNormalization();
-        CheckExtrasSettings();
-        CheckDataDirArgument();
-        CheckDisplays();
-        CheckTaskDistribution();
-        CheckFullscreenCoverage();
-        CheckTaskbarReshowGuard();
-        CheckNotificationLayout();
-        CheckNotificationQuietState();
-        CheckWidgetStacking();
-        CheckNotificationWithdrawAndMerge();
-        std::cout << "Display, fullscreen auto-hide, notification placement and animated reflow checks passed.\n";
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
+    winrt::init_apartment();
+    if (std::any_of(argv + 1, argv + argc, [](const char* arg) { return std::string_view(arg) == "--normalize"; }))
+        return RunNormalizer() ? 0 : 1;
+    CheckSettings();
+    CheckStageDragMerge();
+    CheckSettingsNormalization();
+    CheckExtrasSettings();
+    CheckDataDirArgument();
+    CheckDisplays();
+    CheckTaskDistribution();
+    CheckFullscreenCoverage();
+    CheckTaskbarReshowGuard();
+    CheckNotificationLayout();
+    CheckNotificationQuietState();
+    CheckWidgetStacking();
+    CheckNotificationWithdrawAndMerge();
+    if (g_failed)
         return 1;
-    }
+    std::cout << "Display, fullscreen auto-hide, notification placement and animated reflow checks passed.\n";
+    return 0;
 }

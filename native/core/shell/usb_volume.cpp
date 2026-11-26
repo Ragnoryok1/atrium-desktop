@@ -46,8 +46,10 @@ bool OnUsbBus(wchar_t letter)
 std::optional<UsbVolumeSnapshot> ReadUsbVolumeSnapshot()
 {
     const DWORD drives = GetLogicalDrives();
-    if (!drives)
+    if (!drives) {
+        Log(L"usb: GetLogicalDrives failed (%lu)", GetLastError());
         return std::nullopt; // a failed enumeration must not look like all disks were unplugged
+    }
     UsbVolumeSnapshot snapshot;
     snapshot.present = drives;
     for (wchar_t letter : RemovedLetters(drives, 0)) {
@@ -171,24 +173,26 @@ void UsbVolumeMonitor::Worker()
         initial = false;
         for (const auto& event : events)
             volumes.Observe(event);
-        try {
-            const auto snapshot = reader_();
-            if (!snapshot)
-                continue;
-            auto removed = volumes.Sync(*snapshot);
-            bool notify = false;
-            {
-                std::lock_guard lock(mutex_);
-                if (stopping_)
-                    break;
-                notify = !removed.empty();
-                removed_.insert(removed_.end(), std::make_move_iterator(removed.begin()), std::make_move_iterator(removed.end()));
-            }
-            if (notify && ready_)
-                ready_();
-        } catch (...) {
-            Log(L"usb: reading device information failed");
+        if (!reader_) {
+            Log(L"usb: volume reader is null");
+            break;
         }
+        const auto snapshot = reader_();
+        if (!snapshot) {
+            Log(L"usb: reading device information failed");
+            continue;
+        }
+        auto removed = volumes.Sync(*snapshot);
+        bool notify = false;
+        {
+            std::lock_guard lock(mutex_);
+            if (stopping_)
+                break;
+            notify = !removed.empty();
+            removed_.insert(removed_.end(), std::make_move_iterator(removed.begin()), std::make_move_iterator(removed.end()));
+        }
+        if (notify && ready_)
+            ready_();
     }
     if (restoreErrors)
         SetThreadErrorMode(before, nullptr);

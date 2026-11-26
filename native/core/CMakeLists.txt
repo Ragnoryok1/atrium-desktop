@@ -87,6 +87,7 @@ add_library(atrium_core_lib STATIC
     shell/wechat_open.cpp
     shell/feishu_source.cpp
     ui/surface.cpp
+    ui/surface_paint.cpp
     ui/popup_theme.cpp
     ui/canvas.cpp
     ui/start_menu.cpp
@@ -134,6 +135,7 @@ add_library(atrium_core_lib STATIC
     render/capture.cpp
     render/window_capture.cpp
     render/desktop_backdrop.cpp
+    render/desktop_wallpaper.cpp
     render/glass_renderer.cpp
     render/glass_panel.cpp
     render/panel_glass_host.cpp

@@ -147,6 +147,64 @@ bool Wait(HANDLE pipe, OVERLAPPED& ov, HANDLE quit, DWORD& bytes, DWORD& error)
     return error == ERROR_SUCCESS || error == ERROR_MORE_DATA;
 }
 
+struct ScopedEvent {
+    HANDLE handle = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    ~ScopedEvent()
+    {
+        if (handle)
+            CloseHandle(handle);
+    }
+    ScopedEvent() = default;
+    ScopedEvent(const ScopedEvent&) = delete;
+    ScopedEvent& operator=(const ScopedEvent&) = delete;
+};
+
+struct PipeDisconnectGuard {
+    HANDLE pipe;
+    explicit PipeDisconnectGuard(HANDLE p) : pipe(p) {}
+    ~PipeDisconnectGuard() { DisconnectNamedPipe(pipe); }
+    PipeDisconnectGuard(const PipeDisconnectGuard&) = delete;
+    PipeDisconnectGuard& operator=(const PipeDisconnectGuard&) = delete;
+};
+
+bool ConnectPipe(HANDLE pipe, OVERLAPPED& ov, HANDLE quit)
+{
+    if (ConnectNamedPipe(pipe, &ov))
+        return true;
+    DWORD bytes = 0;
+    DWORD error = GetLastError();
+    if (error == ERROR_IO_PENDING)
+        return Wait(pipe, ov, quit, bytes, error);
+    return error == ERROR_PIPE_CONNECTED || error == ERROR_SUCCESS;
+}
+
+bool ReadPipeMessage(HANDLE pipe, OVERLAPPED& ov, HANDLE quit, std::string& buffer, std::string& message)
+{
+    message.clear();
+    DWORD error = 0;
+    do {
+        ResetEvent(ov.hEvent);
+        DWORD bytes = 0;
+        if (!ReadFile(pipe, buffer.data(), kBuffer, &bytes, &ov)) {
+            error = GetLastError();
+            if (error == ERROR_IO_PENDING) {
+                if (!Wait(pipe, ov, quit, bytes, error))
+                    return false;
+            } else if (error != ERROR_MORE_DATA) {
+                return false; // client gone
+            }
+        } else {
+            error = ERROR_SUCCESS;
+        }
+        message.append(buffer.data(), bytes);
+    } while (error == ERROR_MORE_DATA && message.size() < 1024 * 1024);
+    if (error == ERROR_MORE_DATA) {
+        Log(L"pipe: request exceeded 1 MB, disconnecting");
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 std::wstring SettingsPipeName()
@@ -277,55 +335,30 @@ void SettingsServer::Run()
 
 void SettingsServer::Serve(HANDLE pipe)
 {
+    ScopedEvent event;
+    if (!event.handle)
+        return;
     OVERLAPPED ov{};
-    ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    DWORD bytes = 0, error = 0;
-    if (!ConnectNamedPipe(pipe, &ov)) {
-        error = GetLastError();
-        if (error == ERROR_IO_PENDING && !Wait(pipe, ov, quit_, bytes, error)) {
-            CloseHandle(ov.hEvent);
-            return;
-        }
-        if (error != ERROR_IO_PENDING && error != ERROR_PIPE_CONNECTED && error != ERROR_SUCCESS) {
-            CloseHandle(ov.hEvent);
-            return;
-        }
-    }
+    ov.hEvent = event.handle;
+    if (!ConnectPipe(pipe, ov, quit_))
+        return;
+    PipeDisconnectGuard disconnect{pipe};
+
     std::string buffer(kBuffer, '\0');
     for (;;) {
         std::string message;
-        do {
-            ResetEvent(ov.hEvent);
-            bytes = 0;
-            if (!ReadFile(pipe, buffer.data(), kBuffer, &bytes, &ov)) {
-                error = GetLastError();
-                if (error == ERROR_IO_PENDING) {
-                    if (!Wait(pipe, ov, quit_, bytes, error))
-                        goto done;
-                } else if (error != ERROR_MORE_DATA) {
-                    goto done; // client gone
-                }
-            } else {
-                error = ERROR_SUCCESS;
-            }
-            message.append(buffer.data(), bytes);
-        } while (error == ERROR_MORE_DATA && message.size() < 1024 * 1024);
-        if (error == ERROR_MORE_DATA) {
-            Log(L"pipe: request exceeded 1 MB, disconnecting");
-            goto done;
-        }
+        if (!ReadPipeMessage(pipe, ov, quit_, buffer, message))
+            return;
 
         std::string reply = Handle(message);
         ResetEvent(ov.hEvent);
+        DWORD bytes = 0;
         if (!WriteFile(pipe, reply.data(), DWORD(reply.size()), &bytes, &ov)) {
-            error = GetLastError();
+            DWORD error = GetLastError();
             if (error != ERROR_IO_PENDING || !Wait(pipe, ov, quit_, bytes, error))
-                break;
+                return;
         }
     }
-done:
-    DisconnectNamedPipe(pipe);
-    CloseHandle(ov.hEvent);
 }
 
 std::string SettingsServer::Handle(const std::string& request)

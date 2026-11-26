@@ -2,17 +2,19 @@
 #include "bar_stacking.h"
 
 #include <iostream>
-#include <stdexcept>
 
 using namespace atrium;
 
 namespace {
 const RECT kScreen{-1920, 0, 0, 1080}; // a display left of the primary one
+bool g_failed = false;
 
 void Require(bool condition, const char* message)
 {
-    if (!condition)
-        throw std::runtime_error(message);
+    if (!condition) {
+        std::cerr << message << '\n';
+        g_failed = true;
+    }
 }
 
 bool Same(const RECT& a, const RECT& b) { return EqualRect(&a, &b) != FALSE; }
@@ -185,19 +187,16 @@ void CheckDodgeOverlap()
 
 int main()
 {
-    try {
-        CheckPlacement();
-        CheckRoundTrip();
-        CheckAxes();
-        CheckEdgeOf();
-        CheckBarWindowPlacement();
-        CheckTopmostCoverPolicy();
-        CheckBarReserve();
-        CheckDodgeOverlap();
-    } catch (const std::exception& e) {
-        std::cerr << e.what() << '\n';
+    CheckPlacement();
+    CheckRoundTrip();
+    CheckAxes();
+    CheckEdgeOf();
+    CheckBarWindowPlacement();
+    CheckTopmostCoverPolicy();
+    CheckBarReserve();
+    CheckDodgeOverlap();
+    if (g_failed)
         return 1;
-    }
     std::cout << "bar edge: all checks passed\n";
     return 0;
 }

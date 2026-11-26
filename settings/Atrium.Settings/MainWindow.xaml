@@ -653,16 +653,13 @@
                                 </StackPanel>
                             </Grid>
                         </Border>
-
                         <StackPanel>
                             <TextBlock Text="Software update" Style="{StaticResource SectionStyle}" />
                             <Border Style="{StaticResource TileStyle}">
                                 <StackPanel Spacing="12">
                                     <Grid ColumnSpacing="12">
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock x:Name="UpdateStatus" Text="Not checked yet" Style="{StaticResource RowTitleStyle}"
                                                    TextWrapping="Wrap" VerticalAlignment="Center" AutomationProperties.LiveSetting="Polite" />
@@ -686,7 +683,6 @@
                                 <TextBlock x:Name="PathText" Style="{StaticResource RowNoteStyle}" IsTextSelectionEnabled="True" />
                             </Border>
                         </StackPanel>
-
                         <StackPanel Spacing="6" Margin="4,0,0,0">
                             <TextBlock Style="{StaticResource FootnoteStyle}"
                                        Text="Interface font: MiSans, copyright Xiaomi Inc., used under the MiSans Font Intellectual Property License Agreement." />
@@ -695,7 +691,6 @@
                             </TextBlock>
                         </StackPanel>
                     </StackPanel>
-
                     <!-- A narrow window: the inspector's groups come here, under the page (OnContentSizeChanged) -->
                     <Border x:Name="FoldedInspector" />
                 </StackPanel>

@@ -24,7 +24,6 @@
 #include <memory>
 #include <mutex>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace atrium {
@@ -55,6 +54,7 @@ private:
     void CheckCaptureTarget();
     bool StartCapture(); // adopts a started capture (see Starting); false while none
     void StopCapture();
+    void UpdateDesktopMode();
     // Starting the capture can block (it never returned on one system: #66, the bar stayed blank),
     // so it starts on a thread of its own; the render thread adopts it when done, or gives up.
     struct Starting {
@@ -63,7 +63,10 @@ private:
         Starting(const Starting&) = delete;
         Starting& operator=(const Starting&) = delete;
         ~Starting();
-        HANDLE wake = nullptr; // the frame event, its own copy: the bar may close its handle before the thread ends
+        HANDLE wake = nullptr;      // the frame event, its own copy: the bar may close its handle before the thread ends
+        HANDLE doneEvent = nullptr; // signaled once the worker has finished touching shared state
+        std::atomic<bool> stop{false};
+        std::atomic<bool> finished{false};
         std::mutex lock;
         bool done = false, ok = false, abandoned = false, isProgman = true;
         HRESULT error = S_OK;
@@ -73,7 +76,10 @@ private:
         winrt::Windows::Graphics::Capture::GraphicsCaptureSession session{nullptr};
         winrt::Windows::Graphics::SizeInt32 size{};
     };
+    static void RunCaptureStart(const std::shared_ptr<Starting>& start, const winrt::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice& device);
+    static bool SubmitCaptureStart(const std::shared_ptr<Starting>& start, const winrt::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice& device);
     std::shared_ptr<Starting> starting_;
+    std::vector<std::shared_ptr<Starting>> retiredStarting_;
     double startingSince_ = 0;
     void StartWallpaper();
     void StopWallpaper();
@@ -128,19 +134,17 @@ private:
         Wallpaper& operator=(const Wallpaper&) = delete;
         ~Wallpaper();
         HANDLE stop = nullptr, done = nullptr, wake = nullptr; // wake: the frame event, its own copy
+        std::atomic<bool> finished{false};
         std::mutex lock;
         std::unique_ptr<Picture> picture; // new, not yet taken
     };
-    struct RetiredWorker {
-        std::shared_ptr<Wallpaper> state;
-        std::thread thread;
-    };
     void ReclaimRetired();
     std::unique_ptr<Picture> TakePicture(); // the worker's newest, if there is one
+    void UploadWallpaperPicture(std::unique_ptr<Picture> pic);
+    static std::unique_ptr<Picture> ComposeWallpaper(const Wallpaper& work, std::wstring& composed, bool& composedOnce);
     static void WallpaperLoop(Wallpaper& work); // worker
     std::shared_ptr<Wallpaper> wallpaper_;
-    std::thread worker_;
-    std::vector<RetiredWorker> retired_;
+    std::vector<std::shared_ptr<Wallpaper>> retired_;
 };
 
 // The glass's backdrop in remote-control mode (setting remoteVisible): the wallpaper under one
