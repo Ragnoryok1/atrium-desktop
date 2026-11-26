@@ -67,7 +67,7 @@
 | `folderStackMax` | number | 4–24 | 8 | 文件夹叠放一次最多显示的项目数量（整数，超出范围截断） |
 | `folderStacks` | string[] | 最多 32 项 | `[]` | 文件夹叠放包含的文件夹路径列表，每项去除首尾 ASCII 空白并丢弃空项 |
 | `folderStackFiles` | string[] | 最多 32 项 | `[]` | 文件夹叠放包含的文件路径列表，每项去除首尾 ASCII 空白并丢弃空项 |
-| `dockDisplayMode` | string | `primary` / `follow` / `fixed` / `all` | `primary` | 仅主屏；单个 Dock 在其他屏幕底边停留后唤出（只有接了两块以上屏幕时才查看指针）；固定屏幕；或每个扩展显示器常驻一条任务栏 |
+| `dockDisplayMode` | string | `primary` / `follow` / `fixed` / `all` | `follow` | 单个 Dock 在其他屏幕底边停留后唤出（默认，只有接了两块以上屏幕时才查看指针）；仅主屏；固定屏幕；或每个扩展显示器常驻一条任务栏 |
 | `dockDisplayDelay` | number | 100–2000 ms | 450 | 跨屏唤出的连续停留时间；拖动图标、文件或使用弹出面板时不切屏 |
 | `dockDisplay` | string | 显示器设备接口 ID，或空字符串 | `""` | `fixed` 模式的目标；空值跟随系统主屏；断开后临时使用主屏，保留 ID 供重连恢复 |
 | `desktopDisplay` | string | 显示器设备接口 ID，或空字符串 | `""` | 小组件与台前调度的屏幕，独立于 Dock；空值跟随系统主屏；切换前恢复原屏幕中台前调度收起的窗口 |
@@ -112,7 +112,9 @@
 | `winKeyStart` | bool | | false | 单独按下 Win 键时打开 Atrium 的开始菜单，Windows 的开始菜单不出现。低级键盘钩子在单独的线程上先扣下 Win 键：后面跟了别的键（Win + E 等）就把两个键一起交给 Windows，单独松开则 Windows 始终没有收到它。前台是管理员权限的窗口时（补发的按键送不进去）不拦截。Win + L 由系统在钩子之前处理，不受影响。需要打开 `bar` |
 | `remoteVisible` | bool | | false | “远程控制兼容”：Atrium 的窗口不再从屏幕采集（含 DXGI 桌面复制）中排除，UU 远程、ToDesk、向日葵等远控和录屏软件能看到任务栏、开始菜单和小组件；此时玻璃映出桌面壁纸，而不是实时的屏幕内容。切换后立即生效 |
 | `winNumbers` | bool | | false | Win + 1…9、0 打开栏上第 1…10 个应用，和点按它一样（没开就启动，开着就切换过去）。与 `winKeyStart` 共用同一个键盘钩子；只开这一项时，单独按 Win 仍交给 Windows。带 Shift、Ctrl、Alt 的组合照常交给 Windows。需要打开 `bar` |
-| `startOnLogin` | bool | | true | 当前用户开机自启：`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 下的 `Atrium` 项（指向当前安装目录的 `Atrium.exe`）。正式安装每次启动时，若此值为开且未在任务管理器“启动应用”里被关闭（`StartupApproved\Run\Atrium`），会移除指向当前程序的旧版任务计划程序登录任务 `Atrium Startup-<SID>` 并写入 Run 项；关闭此项或卸载时同时移除本安装的登录任务与 Run 项，不触碰其他安装位置的开机项；开发构建不修改开机项 |
+| `startOnLogin` | bool | | true | 当前用户开机自启。正式安装每次启动时，若此值为开且未在任务管理器“启动应用”里被关闭，会按 `startupMode` 同步开机项并移除本安装的另一种模式旧项；关闭此项或卸载时同时移除本安装的登录任务与 Run 项，不触碰其他安装位置的开机项；开发构建不修改开机项 |
+| `startupMode` | string | `run` / `task` | `run` | 开机自启方式：`run` 写入 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 下的 `Atrium` 项（默认，并检查 `StartupApproved\Run\Atrium`）；`task` 创建当前用户的标准权限计划任务 `Atrium Startup-<SID>`（同样不触发 UAC 弹窗） |
+| `autoUpdate` | bool | | true | 启动或运行时自动检查新版本并准备更新 |
 | `pins` | array | | 见下 | 固定的应用，按顺序显示 |
 
 `pins` 的每一项：`{"name": "显示名", "path": ".lnk / .exe 路径，可空", "args": "附加参数，可空", "aumid": "AppUserModelID，可空", "multipleWindows": false}`。`multipleWindows` 可省略，浏览器与 Windows 文件管理器默认允许新窗口，聊天、音乐及其他应用默认打开已有页面；中键与“打开新窗口”遵循此设置。浏览器仅按常用程序文件名识别（Chrome、Edge、Firefox、Brave、Opera、Vivaldi、Chromium），不扫描协议注册或按显示名推断。主窗口关闭到后台时，优先通过应用自己的托盘入口恢复；托盘入口不可达或无响应时，对非聊天应用重新启动，若仍未显示窗口则作为最后手段恢复其隐藏主窗口（聊天应用不重新启动，以免弹出其他账号的登录窗口）。识别同一应用时 `aumid` 优先，其次匹配启动器与实际程序；多个固定项共用的程序路径不作模糊归组。设置文件里**没有** `pins` 键时（首次运行），Core 导入用户当前 Windows 任务栏的固定项（`%APPDATA%\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\*.lnk`），`get` 返回的 `current` / `saved` 中包含导入结果；保存后写入文件，之后不再导入。

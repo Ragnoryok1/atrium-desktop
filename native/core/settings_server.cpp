@@ -246,7 +246,7 @@ bool SettingsServer::Save(const Settings& s, std::wstring* warning, std::wstring
         warning->clear();
     bool startupChanged = false;
     const bool ok = settingsPath_.empty() ? SaveSettings(s, error, &startupChanged) : SaveSettingsTo(settingsPath_, s, error);
-    if (ok && settingsPath_.empty() && startupChanged && !SetStartOnLogin(s.startOnLogin)) {
+    if (ok && settingsPath_.empty() && startupChanged && !UpdateLogonTask(s.startOnLogin, s.startupMode)) {
         Log(L"settings: settings saved, but Windows startup could not be changed");
         if (warning)
             *warning = Tr(L"Settings were saved, but Windows startup could not be changed. Toggle Start with Windows again, then save.");

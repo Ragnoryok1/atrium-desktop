@@ -164,8 +164,10 @@ Require(BarSettings.FromJson(JsonNode.Parse("""{"notifyPlacement":"bad"}""")!.As
 Require(BarSettings.FromJson(JsonNode.Parse("""{"notifyPlacement":false}""")!.AsObject(), settings).NotifyPlacement == "topRight",
     "Malformed notification placement must retain the current value.");
 parsed = BarSettings.FromJson(JsonNode.Parse("""{"dockDisplayMode":"bad","taskbarApps":"bad","dockDisplayDelay":99999}""")!.AsObject(), new());
-Require(parsed.DockDisplayMode == "primary" && parsed.TaskbarApps == "all" && parsed.DockDisplayDelay == 2000,
+Require(parsed.DockDisplayMode == "follow" && parsed.TaskbarApps == "all" && parsed.DockDisplayDelay == 2000,
     "Invalid values must normalize like the native core.");
+Require(new BarSettings().DockDisplayMode == "follow" && BarSettings.FromJson([], new()).DockDisplayMode == "follow",
+    "DockDisplayMode must default to follow.");
 parsed = BarSettings.FromJson(JsonNode.Parse("""{"dockDisplayDelay":-1}""")!.AsObject(), new());
 Require(parsed.DockDisplayDelay == 100, "Delay must have a lower bound.");
 parsed = BarSettings.FromJson(JsonNode.Parse("""{"dockDisplayDelay":"bad","desktopDisplay":false}""")!.AsObject(), settings);
@@ -192,6 +194,21 @@ foreach (var edit in new Action<BarSettings>[]
     edit(changed);
     Require(!settings.SameAs(changed), "Every display preference must participate in the Save/Revert dirty state.");
 }
+var autoUpdateOff = BarSettings.FromJson(JsonNode.Parse("""{"autoUpdate":false}""")!.AsObject(), new());
+Require(new BarSettings().AutoUpdate && BarSettings.FromJson([], new()).AutoUpdate &&
+        !autoUpdateOff.AutoUpdate && !BarSettings.FromJson(autoUpdateOff.ToJson(), new()).AutoUpdate &&
+        !BarSettings.FromJson([], autoUpdateOff).AutoUpdate &&
+        !BarSettings.FromJson(JsonNode.Parse("""{"autoUpdate":"bad"}""")!.AsObject(), autoUpdateOff).AutoUpdate &&
+        !new BarSettings().SameAs(autoUpdateOff),
+    "AutoUpdate must default true and survive round trips, partial updates, malformed values, and dirty tracking.");
+var startupTask = BarSettings.FromJson(JsonNode.Parse("""{"startupMode":"task"}""")!.AsObject(), new());
+Require(new BarSettings().StartupMode == "run" && BarSettings.FromJson([], new()).StartupMode == "run" &&
+        startupTask.StartupMode == "task" && BarSettings.FromJson(startupTask.ToJson(), new()).StartupMode == "task" &&
+        BarSettings.FromJson([], startupTask).StartupMode == "task" &&
+        BarSettings.FromJson(JsonNode.Parse("""{"startupMode":123}""")!.AsObject(), startupTask).StartupMode == "task" &&
+        BarSettings.FromJson(JsonNode.Parse("""{"startupMode":"bad"}""")!.AsObject(), startupTask).StartupMode == "run" &&
+        !new BarSettings().SameAs(startupTask),
+    "StartupMode must default to run, survive round trips and malformed values, clamp unknown strings to run, and mark settings dirty.");
 var menuOff = BarSettings.FromJson(JsonNode.Parse("""{"windowsContextMenu":false}""")!.AsObject(), new());
 Require(!menuOff.WindowsContextMenu && BarSettings.FromJson(menuOff.ToJson(), new()).SameAs(menuOff),
     "The Windows-style context menu must turn off and survive a round trip.");
@@ -736,6 +753,18 @@ finally
         var concurrentLoaded = SettingsPersistence.ReadSettings(settingsPath);
         Require(concurrentLoaded.Height is >= 40 and <= 47 && !Directory.EnumerateFiles(persistTemp, "*.tmp").Any(),
             "Concurrent WriteSettings must serialize cleanly without .tmp leftovers.");
+
+        string startupPath = Path.Combine(persistTemp, "startup-settings.json");
+        Require(!SettingsPersistence.WriteSettings(startupPath, new BarSettings { StartOnLogin = true, StartupMode = "run" }),
+            "Writing default startup settings must report startupChanged=false.");
+        Require(SettingsPersistence.WriteSettings(startupPath, new BarSettings { StartOnLogin = true, StartupMode = "task" }),
+            "Switching StartupMode while StartOnLogin is true must report startupChanged=true.");
+        Require(!SettingsPersistence.WriteSettings(startupPath, new BarSettings { StartOnLogin = true, StartupMode = "task" }),
+            "Unchanged StartupMode=task must report startupChanged=false.");
+        Require(SettingsPersistence.WriteSettings(startupPath, new BarSettings { StartOnLogin = false, StartupMode = "task" }),
+            "Disabling StartOnLogin must report startupChanged=true.");
+        Require(!SettingsPersistence.WriteSettings(startupPath, new BarSettings { StartOnLogin = false, StartupMode = "run" }),
+            "Changing StartupMode while StartOnLogin is false must report startupChanged=false.");
 
         byte[] corruptBytes = Encoding.UTF8.GetBytes("{broken-cs");
         File.WriteAllBytes(settingsPath, corruptBytes);

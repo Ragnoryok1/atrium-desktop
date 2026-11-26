@@ -529,8 +529,16 @@ internal sealed partial class CoreClient : IDisposable
             string command = $"\"{exe}\"";
             if (s.StartOnLogin)
             {
-                RemoveLogonTask(exe, strictOwner: false);
-                run.SetValue("Atrium", command);
+                if (s.StartupMode == "task")
+                {
+                    CreateLogonTask(exe);
+                    run.DeleteValue("Atrium", throwOnMissingValue: false);
+                }
+                else
+                {
+                    run.SetValue("Atrium", command);
+                    RemoveLogonTask(exe, strictOwner: false);
+                }
             }
             else
             {
@@ -547,7 +555,64 @@ internal sealed partial class CoreClient : IDisposable
         return null;
     }
 
-    // Atrium starts from the HKCU Run key; remove any leftover Task Scheduler logon task for this install.
+    // Create or update the standard-user Task Scheduler logon task for this install.
+    private static void CreateLogonTask(string exe)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        string? sid = System.Security.Principal.WindowsIdentity.GetCurrent().User?.Value;
+        if (string.IsNullOrEmpty(sid))
+            throw new IOException("Could not determine the current user SID.");
+        string name = "Atrium Startup-" + sid;
+        dynamic? service = null, folder = null, definition = null, registrationInfo = null,
+            principal = null, settings = null, idleSettings = null, triggers = null, trigger = null, actions = null, action = null;
+        try
+        {
+            service = Activator.CreateInstance(Type.GetTypeFromProgID("Schedule.Service")!)!;
+            service.Connect();
+            folder = service.GetFolder("\\");
+            definition = service.NewTask(0);
+            registrationInfo = definition.RegistrationInfo;
+            registrationInfo.Author = "Atrium";
+            registrationInfo.Description = "Start Atrium when you sign in to Windows.";
+            principal = definition.Principal;
+            principal.UserId = sid;
+            principal.LogonType = 3; // TASK_LOGON_INTERACTIVE_TOKEN
+            principal.RunLevel = 0;  // TASK_RUNLEVEL_LUA
+            settings = definition.Settings;
+            settings.DisallowStartIfOnBatteries = false;
+            settings.StopIfGoingOnBatteries = false;
+            settings.ExecutionTimeLimit = "PT0S";
+            settings.AllowDemandStart = true;
+            settings.Enabled = true;
+            settings.MultipleInstances = 2; // TASK_INSTANCES_IGNORE_NEW
+            settings.Priority = 4;          // match normal interactive UI priority
+            idleSettings = settings.IdleSettings;
+            idleSettings.StopOnIdleEnd = false;
+            idleSettings.RestartOnIdle = false;
+            triggers = definition.Triggers;
+            trigger = triggers.Create(9); // TASK_TRIGGER_LOGON
+            trigger.UserId = sid;
+            trigger.Enabled = true;
+            actions = definition.Actions;
+            action = actions.Create(0); // TASK_ACTION_EXEC
+            action.Path = exe;
+            action.WorkingDirectory = Path.GetDirectoryName(exe) ?? "";
+            folder.RegisterTaskDefinition(name, definition, 6, null, null, 3);
+        }
+        catch (Exception e) when (e is RuntimeBinderException or COMException or ArgumentException)
+        {
+            throw new IOException(e.Message, e);
+        }
+        finally
+        {
+            static void Release(object? com) { if (com != null && Marshal.IsComObject(com)) Marshal.FinalReleaseComObject(com); }
+            Release(action); Release(actions); Release(trigger); Release(triggers);
+            Release(idleSettings); Release(settings); Release(principal); Release(registrationInfo);
+            Release(definition); Release(folder); Release(service);
+        }
+    }
+
+    // Remove any leftover Task Scheduler logon task for this install.
     private static void RemoveLogonTask(string exe, bool strictOwner)
     {
         if (!OperatingSystem.IsWindows()) return;
@@ -560,16 +625,15 @@ internal sealed partial class CoreClient : IDisposable
             folder = service.GetFolder("\\");
             try { task = folder.GetTask(name); }
             catch (COMException e) when (e.HResult == unchecked((int)0x80070002)) { return; } // no task
-            definition = task.Definition;
-            actions = definition.Actions;
-            if ((int)actions.Count < 1) return;
-            action = actions.Item(1);
-            string? command = (action.Path as string)?.Trim('"');
-            if (!string.Equals(command, exe, StringComparison.OrdinalIgnoreCase))
+            if (strictOwner)
             {
-                if (strictOwner)
+                definition = task.Definition;
+                actions = definition.Actions;
+                if ((int)actions.Count < 1) return;
+                action = actions.Item(1);
+                string? command = (action.Path as string)?.Trim('"');
+                if (!string.Equals(command, exe, StringComparison.OrdinalIgnoreCase))
                     throw new IOException(Loc.T("That startup entry belongs to Atrium in another location"));
-                return;
             }
             folder.DeleteTask(name, 0);
         }

@@ -56,7 +56,7 @@
     "folderStackMax": {"type": "number", "default": 8, "min": 4, "max": 24},
     "folderStacks": {"type": "stringArray", "default": [], "maxCount": 32},
     "folderStackFiles": {"type": "stringArray", "default": [], "maxCount": 32},
-    "dockDisplayMode": {"type": "enum", "default": "primary", "values": ["primary", "follow", "fixed", "all"], "fallback": "primary"},
+    "dockDisplayMode": {"type": "enum", "default": "follow", "values": ["primary", "follow", "fixed", "all"], "fallback": "follow"},
     "dockDisplayDelay": {"type": "number", "default": 450, "min": 100, "max": 2000},
     "dockDisplay": {"type": "string", "default": ""},
     "desktopDisplay": {"type": "string", "default": ""},
@@ -105,6 +105,8 @@
     "remoteVisible": {"type": "bool", "default": false},
     "winNumbers": {"type": "bool", "default": false},
     "startOnLogin": {"type": "bool", "default": true},
+    "startupMode": {"type": "enum", "default": "run", "values": ["run", "task"], "fallback": "run"},
+    "autoUpdate": {"type": "bool", "default": true},
     "pins": {"type": "pins", "default": null, "optional": true, "maxCount": 64}
   }
 }

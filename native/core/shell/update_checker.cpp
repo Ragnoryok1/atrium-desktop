@@ -155,17 +155,54 @@ void DownloadRelease(const json::JsonObject& release, const Version& current)
         return;
     }
 }
+
+bool CheckLatestRelease(HANDLE stop, const Version& current, bool autoCheck)
+{
+    try {
+        winrt::Windows::Web::Http::HttpClient http;
+        http.DefaultRequestHeaders().UserAgent().TryParseAdd(L"Atrium-Desktop/1.0");
+        http.DefaultRequestHeaders().Accept().TryParseAdd(L"application/vnd.github+json");
+        auto request = http.GetStringAsync(winrt::Windows::Foundation::Uri(kLatest));
+        const auto start = GetTickCount64();
+        while (request.Status() == winrt::Windows::Foundation::AsyncStatus::Started) {
+            if (WaitForSingleObject(stop, 100) == WAIT_OBJECT_0 || GetTickCount64() - start >= 15000) {
+                request.Cancel();
+                break;
+            }
+        }
+        if (WaitForSingleObject(stop, 0) == WAIT_OBJECT_0)
+            return false;
+        auto release = json::JsonObject::Parse(request.GetResults());
+        std::wstring tag = release.GetNamedString(L"tag_name").c_str();
+        DownloadRelease(release, current);
+        Log(L"update: checked latest release %s", tag.c_str());
+    } catch (const winrt::hresult_error& error) {
+        if (autoCheck)
+            Log(L"update: check failed (0x%08X); retry in 6 hours", unsigned(error.code().value));
+        else
+            Log(L"update: check failed (0x%08X)", unsigned(error.code().value));
+    }
+    return true;
+}
 } // namespace
 
-UpdateChecker::UpdateChecker(HWND notify, UINT message)
+UpdateChecker::UpdateChecker(HWND notify, UINT message, bool autoCheck)
     : notify_(notify),
       message_(message),
       stop_(CreateEventW(nullptr, TRUE, FALSE, nullptr)),
-      cache_(UpdateCache())
+      wake_(CreateEventW(nullptr, FALSE, FALSE, nullptr)),
+      cache_(UpdateCache()),
+      autoCheck_(autoCheck)
 {
-    if (!stop_)
-        winrt::throw_last_error();
-    if (!IsDevelopmentBuild() && !cache_.empty() && GetFileAttributesW((cache_ + L"\\download.json").c_str()) != INVALID_FILE_ATTRIBUTES)
+    if (!stop_ || !wake_) {
+        const DWORD err = GetLastError();
+        if (wake_)
+            CloseHandle(wake_);
+        if (stop_)
+            CloseHandle(stop_);
+        winrt::throw_hresult(HRESULT_FROM_WIN32(err ? err : ERROR_OUTOFMEMORY));
+    }
+    if (autoCheck && !IsDevelopmentBuild() && !cache_.empty() && GetFileAttributesW((cache_ + L"\\download.json").c_str()) != INVALID_FILE_ATTRIBUTES)
         StartWorker(L"--resume-update");
     PostMessageW(notify_, message_, 0, 0);
     worker_ = std::thread([this] { Run(); });
@@ -173,9 +210,37 @@ UpdateChecker::UpdateChecker(HWND notify, UINT message)
 
 UpdateChecker::~UpdateChecker()
 {
-    SetEvent(stop_);
-    worker_.join();
-    CloseHandle(stop_);
+    if (stop_)
+        SetEvent(stop_);
+    if (worker_.joinable())
+        worker_.join();
+    if (wake_)
+        CloseHandle(wake_);
+    if (stop_)
+        CloseHandle(stop_);
+}
+
+void UpdateChecker::SetAutoCheck(bool on)
+{
+    std::lock_guard lock(mutex_);
+    if (autoCheck_ == on)
+        return;
+    autoCheck_ = on;
+    SetEvent(wake_);
+}
+
+void UpdateChecker::CheckNow()
+{
+    std::lock_guard lock(mutex_);
+    manualRequested_ = true;
+    SetEvent(wake_);
+}
+
+void UpdateChecker::OnPowerResume()
+{
+    std::lock_guard lock(mutex_);
+    if (autoCheck_)
+        SetEvent(wake_);
 }
 
 void UpdateChecker::Run()
@@ -190,29 +255,41 @@ void UpdateChecker::Run()
         if (!json::JsonObject::TryParse(ReadTextFile(path), state))
             state = json::JsonObject();
         int64_t checked = int64_t(state.GetNamedNumber(L"checked", 0));
-        while (WaitForSingleObject(stop_, Delay(checked, Now())) == WAIT_TIMEOUT) {
-            checked = Now();
-            try {
-                winrt::Windows::Web::Http::HttpClient http;
-                http.DefaultRequestHeaders().UserAgent().TryParseAdd(L"Atrium-Desktop/1.0");
-                http.DefaultRequestHeaders().Accept().TryParseAdd(L"application/vnd.github+json");
-                auto request = http.GetStringAsync(winrt::Windows::Foundation::Uri(kLatest));
-                const auto start = GetTickCount64();
-                while (request.Status() == winrt::Windows::Foundation::AsyncStatus::Started) {
-                    if (WaitForSingleObject(stop_, 100) == WAIT_OBJECT_0 || GetTickCount64() - start >= 15000) {
-                        request.Cancel();
-                        break;
+        const HANDLE handles[2] = {stop_, wake_};
+        for (;;) {
+            bool runCheck = false;
+            bool isAuto = false;
+            DWORD waitMs = INFINITE;
+            {
+                std::lock_guard lock(mutex_);
+                if (manualRequested_) {
+                    manualRequested_ = false;
+                    runCheck = true;
+                } else if (autoCheck_) {
+                    waitMs = Delay(checked, Now());
+                    if (waitMs == 0) {
+                        runCheck = true;
+                        isAuto = true;
                     }
                 }
-                if (WaitForSingleObject(stop_, 0) == WAIT_OBJECT_0)
-                    break;
-                auto release = json::JsonObject::Parse(request.GetResults());
-                std::wstring tag = release.GetNamedString(L"tag_name").c_str();
-                DownloadRelease(release, current);
-                Log(L"update: checked latest release %s", tag.c_str());
-            } catch (const winrt::hresult_error& error) {
-                Log(L"update: check failed (0x%08X); retry in 6 hours", unsigned(error.code().value));
             }
+            if (!runCheck) {
+                const DWORD wait = WaitForMultipleObjects(2, handles, FALSE, waitMs);
+                if (wait == WAIT_OBJECT_0)
+                    break;
+                if (wait == WAIT_OBJECT_0 + 1)
+                    continue;
+                if (wait != WAIT_TIMEOUT)
+                    break;
+                std::lock_guard lock(mutex_);
+                if (!autoCheck_ && !manualRequested_)
+                    continue;
+                isAuto = !manualRequested_;
+                manualRequested_ = false;
+            }
+            checked = Now();
+            if (!CheckLatestRelease(stop_, current, isAuto))
+                break;
             state.SetNamedValue(L"checked", json::JsonValue::CreateNumberValue(double(checked)));
             if (!WriteTextFile(path, state.Stringify().c_str()))
                 Log(L"update: could not save check state");

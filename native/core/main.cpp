@@ -583,6 +583,7 @@ void ApplySettings(const Settings& s)
     g_app.tasks->SetPins(s.pins.value_or(std::vector<PinnedApp>{}));
     g_app.tasks->SetShowRunning(s.showRunning);
     ApplyDesktopAndSystemSettings(s);
+    g_app.updates ? g_app.updates->SetAutoCheck(s.autoUpdate) : void();
     SyncDisplayBars(s);
     if (g_app.barOn != s.bar) {
         g_app.barOn = s.bar;
@@ -1035,6 +1036,18 @@ void HandleCatalogMessage(bool listChanged)
     g_app.extras ? g_app.extras->OnCatalogChanged(listChanged) : void();
 }
 
+void HandlePowerBroadcast(WPARAM w, LPARAM l)
+{
+    if ((w == PBT_APMRESUMEAUTOMATIC || w == PBT_APMRESUMESUSPEND) && g_app.updates)
+        g_app.updates->OnPowerResume();
+    else if (const auto* s = w == PBT_POWERSETTINGCHANGE ? reinterpret_cast<const POWERBROADCAST_SETTING*>(l) : nullptr;
+             s && s->PowerSetting == kBrightnessSetting && s->DataLength == sizeof(DWORD)) {
+        g_app.brightness = int(std::min<DWORD>(*reinterpret_cast<const DWORD*>(s->Data), 100));
+        g_app.control->BrightnessChanged(g_app.brightness);
+        UpdateStatus();
+    }
+}
+
 LRESULT CALLBACK HostProc(HWND h, UINT m, WPARAM w, LPARAM l)
 {
     if (g_app.tasks && g_app.tasks->HandleMessage(m, w, l))
@@ -1044,12 +1057,8 @@ LRESULT CALLBACK HostProc(HWND h, UINT m, WPARAM w, LPARAM l)
     switch (m) {
     case WM_UPDATE_READY:
         if (g_app.updates && g_app.notes)
-            g_app.updates->NotifyPrepared([](std::optional<Notice> card, bool silent) {
-                if (card)
-                    g_app.notes->Post(std::move(*card), silent);
-                else
-                    g_app.notes->ClearPreparedUpdate();
-            });
+            g_app.updates->NotifyPrepared(
+                [](std::optional<Notice> card, bool silent) { card ? g_app.notes->Post(std::move(*card), silent) : g_app.notes->ClearPreparedUpdate(); });
         return 0;
     case WM_TRAY: HandleTrayCallback(w, l); return 0;
     case WM_OPEN_SETTINGS: OpenSettings(); return 0;
@@ -1072,21 +1081,10 @@ LRESULT CALLBACK HostProc(HWND h, UINT m, WPARAM w, LPARAM l)
         status->brightness = g_app.brightness;
         g_app.lastStatus = *status;
         ForBars([&](Bar& bar) { bar.SetStatus(*status); });
-        g_app.control->SetStatus(*status);
-        g_app.start->SetStatus(*status);
-        g_app.widgets->SetStatus(*status);
+        g_app.control->SetStatus(*status), g_app.start->SetStatus(*status), g_app.widgets->SetStatus(*status);
         return 0;
     }
-    case WM_POWERBROADCAST:
-        if (w == PBT_POWERSETTINGCHANGE) {
-            const auto* s = reinterpret_cast<const POWERBROADCAST_SETTING*>(l);
-            if (s && s->PowerSetting == kBrightnessSetting && s->DataLength == sizeof(DWORD)) {
-                g_app.brightness = int(std::min<DWORD>(*reinterpret_cast<const DWORD*>(s->Data), 100));
-                g_app.control->BrightnessChanged(g_app.brightness);
-                UpdateStatus();
-            }
-        }
-        return TRUE;
+    case WM_POWERBROADCAST: HandlePowerBroadcast(w, l); return TRUE;
     case WM_DEVICECHANGE:
         if (HandleDeviceBroadcast(w, l))
             return TRUE;
@@ -1146,10 +1144,11 @@ LRESULT CALLBACK HostProc(HWND h, UINT m, WPARAM w, LPARAM l)
 
 std::thread StartLogonUpdate(const Settings& settings)
 {
-    if (!ShouldSyncStartupOnLaunch(IsDevelopmentBuild(), IsRegisteredApplication(ExeDir()), settings.startOnLogin, StartupTurnedOff()))
+    if (!ShouldSyncStartupOnLaunch(IsDevelopmentBuild(), IsRegisteredApplication(ExeDir()), settings.startOnLogin,
+                                   ParseStartupMode(settings.startupMode) == StartupMode::Run && StartupTurnedOff()))
         return {};
-    return std::thread([] {
-        if (!SetStartOnLogin(true))
+    return std::thread([mode = settings.startupMode] {
+        if (!UpdateLogonTask(true, mode))
             Log(L"startup: could not update the Windows logon entry");
     });
 }
@@ -1490,7 +1489,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
         Log(L"usb: could not register for volume notifications (%lu)", GetLastError());
     SetTimer(g_app.host, kStatusTimer, kStatusMs, nullptr);
     g_app.tray->Refresh();
-    g_app.updates = std::make_unique<UpdateChecker>(g_app.host, WM_UPDATE_READY);
+    g_app.updates = std::make_unique<UpdateChecker>(g_app.host, WM_UPDATE_READY, settings.autoUpdate);
     if (!g_readyEvent.empty()) {
         SetTimer(g_app.host, kReadyTimer, 50, nullptr);
         PostMessageW(g_app.host, WM_ATRIUM_SERVER_READY, 0, 0);

@@ -115,7 +115,7 @@ void CheckSettings()
         settings.taskbarApps = mode;
         Require(Settings::FromJson(settings.ToJson(), Settings{}, parsed) && parsed.taskbarApps == mode, "every task distribution mode survives saving");
     }
-    Require(Settings::FromJson(LR"({"height":64})", Settings{}, parsed) && parsed.dockDisplayMode == L"primary" && parsed.taskbarApps == L"all" &&
+    Require(Settings::FromJson(LR"({"height":64})", Settings{}, parsed) && parsed.dockDisplayMode == L"follow" && parsed.taskbarApps == L"all" &&
                 parsed.dockDisplayDelay == 450 && !parsed.taskbarRightPrimaryOnly && parsed.notifyPlacement == L"dock",
             "old settings retain right-side elements and default dock notifications");
     Require(Settings::FromJson(LR"({"notifyPlacement":"bad"})", Settings{}, parsed) && parsed.notifyPlacement == L"dock",
@@ -131,7 +131,7 @@ void CheckSettings()
     }
     settings.notifyPlacement = L"topRight";
     Require(Settings::FromJson(LR"({"dockDisplayMode":"bad","taskbarApps":"bad","dockDisplayDelay":99999})", Settings{}, parsed) &&
-                parsed.dockDisplayMode == L"primary" && parsed.taskbarApps == L"all" && parsed.dockDisplayDelay == 2000,
+                parsed.dockDisplayMode == L"follow" && parsed.taskbarApps == L"all" && parsed.dockDisplayDelay == 2000,
             "invalid values are normalized");
     Require(Settings::FromJson(LR"({"dockDisplayDelay":-1})", Settings{}, parsed) && parsed.dockDisplayDelay == 100, "delay has a lower bound");
     Require(Settings::FromJson(LR"({"dockDisplayDelay":"bad","dockDisplay":false})", settings, parsed) && parsed.dockDisplayDelay == 750 &&
@@ -199,6 +199,19 @@ void CheckSettingsNormalization()
     Require(Settings::FromJson(LR"({"tint":"# 12345"})", tinted, parsed) && parsed.tint == 0x112233, "whitespace-padded tint is rejected and retains fallback");
     Require(Settings::FromJson(LR"({"tint":"#GGGGGG"})", tinted, parsed) && parsed.tint == 0x112233, "non-hex tint is rejected and retains fallback");
     Require(Settings::FromJson(LR"({"tint":"#1a2B3c"})", tinted, parsed) && parsed.tint == 0x1A2B3C, "strict ASCII hex tint parses");
+
+    Settings updateOff;
+    updateOff.autoUpdate = false;
+    Require(Settings{}.autoUpdate && Settings::FromJson(LR"({})", Settings{}, parsed) && parsed.autoUpdate, "autoUpdate defaults to true");
+    Require(Settings::FromJson(updateOff.ToJson(), Settings{}, parsed) && !parsed.autoUpdate, "autoUpdate false persists across round trip");
+    Require(Settings::FromJson(LR"({"autoUpdate":"bad"})", updateOff, parsed) && !parsed.autoUpdate, "malformed autoUpdate retains current value");
+
+    Settings taskStartup;
+    taskStartup.startupMode = L"task";
+    Require(Settings{}.startupMode == L"run" && Settings::FromJson(LR"({})", Settings{}, parsed) && parsed.startupMode == L"run",
+            "startupMode defaults to run");
+    Require(Settings::FromJson(taskStartup.ToJson(), Settings{}, parsed) && parsed.startupMode == L"task", "startupMode task persists across round trip");
+    Require(Settings::FromJson(LR"({"startupMode":"bogus"})", taskStartup, parsed) && parsed.startupMode == L"run", "invalid startupMode normalizes to run");
 }
 
 void CheckExtrasSettings()

@@ -137,6 +137,7 @@ void ReadModuleSettingsJson(const json::JsonObject& o, Settings& s)
     flag(L"winKeyStart", s.winKeyStart);
     flag(L"winNumbers", s.winNumbers);
     flag(L"startOnLogin", s.startOnLogin);
+    flag(L"autoUpdate", s.autoUpdate);
 }
 
 void ReadPinsJson(const json::JsonObject& o, Settings& s)
@@ -401,6 +402,8 @@ void WriteSystemJson(const json::JsonObject& o, const Settings& s)
     flag(L"winKeyStart", s.winKeyStart);
     flag(L"winNumbers", s.winNumbers);
     flag(L"startOnLogin", s.startOnLogin);
+    str(L"startupMode", s.startupMode);
+    flag(L"autoUpdate", s.autoUpdate);
 }
 
 void WritePinsJson(const json::JsonObject& o, const std::optional<std::vector<PinnedApp>>& pins)
@@ -463,8 +466,10 @@ void Settings::Clamp()
         startSize.clear();
     if (startIcon != L"small" && startIcon != L"medium" && startIcon != L"large" && startIcon != L"xlarge")
         startIcon.clear();
-    if (dockDisplayMode != L"follow" && dockDisplayMode != L"fixed" && dockDisplayMode != L"all")
-        dockDisplayMode = L"primary";
+    if (dockDisplayMode != L"primary" && dockDisplayMode != L"fixed" && dockDisplayMode != L"all")
+        dockDisplayMode = L"follow";
+    if (startupMode != L"task")
+        startupMode = L"run";
     if (taskbarApps != L"primaryAndWindow" && taskbarApps != L"window")
         taskbarApps = L"all";
     if (notifyPlacement != L"topLeft" && notifyPlacement != L"topRight" && notifyPlacement != L"bottomLeft" && notifyPlacement != L"bottomRight")
@@ -554,6 +559,7 @@ bool Settings::FromJson(const std::wstring& text, const Settings& base, Settings
     flag(L"taskbarRightPrimaryOnly", s.taskbarRightPrimaryOnly);
     flag(L"windowsContextMenu", s.windowsContextMenu);
     display(L"notifyPlacement", s.notifyPlacement);
+    display(L"startupMode", s.startupMode);
     ReadPinsJson(o, s);
     s.Clamp();
     out = s;

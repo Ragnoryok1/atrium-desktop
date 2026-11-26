@@ -1,6 +1,6 @@
 {
-  "core/main.cpp|complexity|HostProc(HWND,UINT,WPARAM,LPARAM)": 49,
-  "core/main.cpp|file-lines": 1506,
+  "core/main.cpp|complexity|HostProc(HWND,UINT,WPARAM,LPARAM)": 42,
+  "core/main.cpp|file-lines": 1505,
   "core/ui/calendar_panel.cpp|complexity|CalendarPanel::PaintMonth(Canvas&,const Theme&,D2D1_RECT_F)": 50,
   "core/ui/desktop_widgets.cpp|complexity|DesktopWidgets::HostProc(HWND,UINT,WPARAM,LPARAM)": 55,
   "core/ui/desktop_widgets.cpp|complexity|DesktopWidgets::Key(Widget&,UINT,WPARAM)": 59,
@@ -11,10 +11,5 @@
   "core/ui/notifications.cpp|complexity|Notifications::Message(Mode,UINT,WPARAM,LPARAM,LRESULT&)": 66,
   "core/ui/notifications.cpp|file-lines": 1080,
   "core/ui/widget_faces.cpp|complexity|PaintCalendar(Canvas&,WidgetSize,const WidgetWorld&,const Pal&,float,float)": 61,
-  "core/ui/widget_faces.cpp|file-lines": 1041,
-  "settings/Atrium.Settings/ContinuousControls.xaml|file-lines": 842,
-  "settings/Atrium.Settings/MainWindow.Design.cs|file-lines": 1115,
-  "settings/Atrium.Settings/MainWindow.Stage.cs|file-lines": 1113,
-  "settings/Atrium.Settings/MainWindow.xaml.cs|file-lines": 1340,
-  "settings/Atrium.Settings/MainWindow.xaml|file-lines": 1089
+  "core/ui/widget_faces.cpp|file-lines": 1041
 }

@@ -1076,6 +1076,12 @@
   "Administrator mode active": "已切换为管理员权限运行",
   "Atrium is now running with administrator privileges.": "Atrium 当前正以管理员权限运行。",
   "Could not start as administrator": "无法以管理员身份启动",
-  "Atrium restarted, but the settings window could not reconnect yet. Check the status indicator.": "Atrium 已重启，但设置窗口暂未能重新连接，请查看顶部运行状态。"
+  "Atrium restarted, but the settings window could not reconnect yet. Check the status indicator.": "Atrium 已重启，但设置窗口暂未能重新连接，请查看顶部运行状态。",
+  "Check for updates automatically": "自动检查更新",
+  "Check for new Atrium releases on launch and in the background.": "启动时及在后台自动检查 Atrium 新版本。",
+  "Startup method": "启动方式",
+  "Registry Run": "注册表启动项",
+  "Windows Scheduled Task": "Windows 计划任务",
+  "Registry Run is the default. Scheduled Task creates a standard-user logon task (still avoids UAC prompts), though some security tools may prompt when creating it.": "默认使用注册表启动项。计划任务模式会创建标准用户登录任务（同样无需 UAC 确认），但部分安全软件可能会在创建任务时弹出提示。"
  }
 }

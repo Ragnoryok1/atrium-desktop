@@ -90,7 +90,7 @@ struct Settings {
     std::wstring statusStyle = L"ring"; // the status entry: ring (a ring round the Wi-Fi fan) | icons (network, volume, battery)
     std::vector<std::wstring> controlModules{L"stage"}; // the control centre's optional modules, in order (kControlModules)
     // One Dock, summoned at another display's bottom edge, as on macOS.
-    std::wstring dockDisplayMode = L"primary"; // primary (as before several displays were known) | follow | fixed | all
+    std::wstring dockDisplayMode = L"follow"; // follow (at the active display) | primary | fixed | all
     double dockDisplayDelay = 450;   // milliseconds at another display's bottom edge (100..2000)
     std::wstring dockDisplay;        // fixed display's device-interface ID
     std::wstring desktopDisplay;     // widgets and Stage Manager; empty follows the system primary
@@ -149,6 +149,8 @@ struct Settings {
     bool trayHost = true;            // Atrium receives the apps' tray icons itself (shell/tray_host.h)
     bool remoteVisible = false;      // remote-control apps see Atrium; the glass shows the wallpaper
     bool startOnLogin = true;        // independent of starting/stopping the current session
+    std::wstring startupMode = L"run"; // run (HKCU Run entry) | task (Task Scheduler logon task)
+    bool autoUpdate = true;          // check GitHub releases on startup and periodically
     // Pinned apps; nullopt = never saved yet (first run imports the Windows pins).
     std::optional<std::vector<PinnedApp>> pins;
 
@@ -178,7 +180,7 @@ Settings LoadSettingsFrom(const std::wstring& path, SettingsFileState* stateOut 
 Settings LoadSettings();
 // True means the file was saved. A failed save says why in `error` (the path,
 // the system's reason). `startupChangedOut`, when non-null, reports whether
-// `startOnLogin` differs from the prior valid file on disk.
+// `startOnLogin` or `startupMode` differs from the prior valid file on disk.
 [[nodiscard]] bool SaveSettingsTo(const std::wstring& path, const Settings& s, std::wstring* error = nullptr,
                                   const std::function<bool(const std::wstring&)>& backupCorrupt = {}, bool* startupChangedOut = nullptr);
 [[nodiscard]] bool SaveSettings(const Settings& s, std::wstring* error = nullptr, bool* startupChangedOut = nullptr);
