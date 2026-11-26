@@ -246,6 +246,12 @@ Settings SettingsServer::Saved()
     return saved_;
 }
 
+void SettingsServer::SetCommittedAutoUpdateCallback(std::function<void(bool)> callback)
+{
+    std::lock_guard g(lock_);
+    onAutoUpdateCommitted_ = std::move(callback);
+}
+
 bool SettingsServer::Save(const Settings& s, std::wstring* warning, std::wstring* error) const
 {
     if (warning)
@@ -279,11 +285,15 @@ bool SettingsServer::Modify(const std::function<void(Settings&)>& change)
     }
     change(current);
     current.Clamp();
+    std::function<void(bool)> onAutoUpdateCommitted;
     {
         std::lock_guard g(lock_);
         saved_ = saved;
         ++revision_;
+        onAutoUpdateCommitted = onAutoUpdateCommitted_;
     }
+    if (onAutoUpdateCommitted)
+        onAutoUpdateCommitted(saved.autoUpdate);
     SetCurrent(current);
     return true;
 }
@@ -436,11 +446,15 @@ std::string SettingsServer::Handle(const std::string& request)
             }
             Log(L"pipe: commit saved");
             uint64_t nextRevision = 0;
+            std::function<void(bool)> onAutoUpdateCommitted;
             {
                 std::lock_guard g(lock_);
                 saved_ = next;
                 nextRevision = ++revision_;
+                onAutoUpdateCommitted = onAutoUpdateCommitted_;
             }
+            if (onAutoUpdateCommitted)
+                onAutoUpdateCommitted(next.autoUpdate);
             SetCurrent(next);
             json::JsonObject reply;
             reply.SetNamedValue(L"op", json::JsonValue::CreateStringValue(L"ok"));

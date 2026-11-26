@@ -751,7 +751,7 @@ void TrayModel::RunClickJob(IUIAutomation* uia, const Job& job, const tray::Shel
     }
     bool observed = result.outcome == tray::Outcome::Observed;
     if (!observed && job.action != tray::Action::Right && !job.icon.exe.empty() && !tray::IsShellExplorerExe(job.icon.exe) &&
-        tray::ShouldAllowExeForegroundFallback(job.allowProgramWake, target != nullptr, resolved.reason))
+        tray::ShouldAllowExeForegroundFallback(job.allowProgramWake))
         observed = ForegroundExisting(job.icon.exe, stopEvent_), Log(L"tray: click foreground-existing observed=%d", observed);
     const bool shown = !observed && tray_detail::ShowOverflow(uia, stopEvent_);
     Log(L"tray: click end result=%s elapsed=%llu ms", observed ? L"observed" : shown ? L"system-tray" : L"needs-user", GetTickCount64() - findStart);

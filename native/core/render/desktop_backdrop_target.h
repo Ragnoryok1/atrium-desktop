@@ -10,9 +10,51 @@
 
 #include <windows.h>
 
+#include <algorithm>
+#include <memory>
+#include <mutex>
+#include <unordered_map>
 #include <vector>
 
 namespace atrium {
+
+template<typename Fn> inline bool SubmitThreadpoolWork(Fn fn)
+{
+    static std::mutex jobLock;
+    static std::unordered_map<void*, std::shared_ptr<Fn>> jobs;
+    auto job = std::make_shared<Fn>(std::move(fn));
+    {
+        std::lock_guard g(jobLock);
+        jobs.emplace(job.get(), job);
+    }
+    auto callback = [](PTP_CALLBACK_INSTANCE, PVOID ctx) {
+        std::shared_ptr<Fn> local;
+        {
+            std::lock_guard g(jobLock);
+            if (auto it = jobs.find(ctx); it != jobs.end()) {
+                local = std::move(it->second);
+                jobs.erase(it);
+            }
+        }
+        if (local)
+            (*local)();
+    };
+    if (!TrySubmitThreadpoolCallback(callback, job.get(), nullptr)) {
+        std::lock_guard g(jobLock);
+        jobs.erase(job.get());
+        return false;
+    }
+    return true;
+}
+
+// Waits at most `budgetMs` for every handle in `handles`; returns true if all signaled or empty.
+inline bool WaitBoundedHandles(const std::vector<HANDLE>& handles, DWORD budgetMs)
+{
+    if (handles.empty())
+        return true;
+    const DWORD count = static_cast<DWORD>(std::min<size_t>(handles.size(), MAXIMUM_WAIT_OBJECTS));
+    return WaitForMultipleObjects(count, handles.data(), TRUE, budgetMs) == WAIT_OBJECT_0;
+}
 
 struct DesktopHostCandidate {
     HWND hwnd = nullptr;

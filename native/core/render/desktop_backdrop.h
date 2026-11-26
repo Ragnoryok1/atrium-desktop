@@ -78,6 +78,8 @@ private:
     };
     static void RunCaptureStart(const std::shared_ptr<Starting>& start, const winrt::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice& device);
     static bool SubmitCaptureStart(const std::shared_ptr<Starting>& start, const winrt::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice& device);
+    void RetireCaptureObjects(winrt::Windows::Graphics::Capture::GraphicsCaptureItem item, winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool pool,
+                              winrt::Windows::Graphics::Capture::GraphicsCaptureSession session);
     std::shared_ptr<Starting> starting_;
     std::vector<std::shared_ptr<Starting>> retiredStarting_;
     double startingSince_ = 0;

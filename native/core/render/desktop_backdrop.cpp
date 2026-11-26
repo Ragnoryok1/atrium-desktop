@@ -122,6 +122,27 @@ bool ExtractDesktopFrame(wgc::Direct3D11CaptureFramePool& pool, const wgd::Direc
     return true;
 }
 
+struct ApartmentGuard {
+    ApartmentGuard() { winrt::init_apartment(winrt::apartment_type::multi_threaded); }
+    ~ApartmentGuard() { winrt::uninit_apartment(); }
+    ApartmentGuard(const ApartmentGuard&) = delete;
+    ApartmentGuard& operator=(const ApartmentGuard&) = delete;
+};
+
+void CloseWgcObjects(wgc::GraphicsCaptureItem& item, wgc::Direct3D11CaptureFramePool& pool, wgc::GraphicsCaptureSession& session)
+{
+    try {
+        if (session)
+            session.Close();
+        if (pool)
+            pool.Close();
+    } catch (const winrt::hresult_error&) {
+    }
+    session = nullptr;
+    pool = nullptr;
+    item = nullptr;
+}
+
 } // namespace
 
 DesktopBackdrop::DesktopBackdrop(const Gpu& gpu, HANDLE frameEvent) : gpu_(gpu), frameEvent_(frameEvent)
@@ -153,8 +174,7 @@ DesktopBackdrop::~DesktopBackdrop()
         if (r->doneEvent && pending.size() < MAXIMUM_WAIT_OBJECTS)
             pending.push_back(r->doneEvent);
     }
-    if (!pending.empty())
-        WaitForMultipleObjects(DWORD(pending.size()), pending.data(), TRUE, 250);
+    WaitBoundedHandles(pending, 250);
     // Bounded wait above prevents blocking render/shutdown if Windows hangs in #66 or Explorer.
     // Threadpool callbacks still retain their own shared_ptr until completion.
     ReclaimRetired();
@@ -279,12 +299,7 @@ void DesktopBackdrop::CheckCaptureTarget()
 
 void DesktopBackdrop::RunCaptureStart(const std::shared_ptr<Starting>& start, const wgd::Direct3D11::IDirect3DDevice& device)
 {
-    struct ApartmentGuard {
-        ApartmentGuard() { winrt::init_apartment(winrt::apartment_type::multi_threaded); }
-        ~ApartmentGuard() { winrt::uninit_apartment(); }
-        ApartmentGuard(const ApartmentGuard&) = delete;
-        ApartmentGuard& operator=(const ApartmentGuard&) = delete;
-    } apartment;
+    ApartmentGuard apartment;
     Starting s;
     try {
         auto interop = winrt::get_activation_factory<wgc::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
@@ -334,13 +349,7 @@ void DesktopBackdrop::RunCaptureStart(const std::shared_ptr<Starting>& start, co
         }
         start->done = true;
     }
-    try {
-        if (closeSession)
-            closeSession.Close();
-        if (closePool)
-            closePool.Close();
-    } catch (const winrt::hresult_error&) {
-    }
+    CloseWgcObjects(closeItem, closePool, closeSession);
     start->finished.store(true, std::memory_order_release);
     if (start->doneEvent)
         SetEvent(start->doneEvent);
@@ -350,35 +359,31 @@ void DesktopBackdrop::RunCaptureStart(const std::shared_ptr<Starting>& start, co
 
 bool DesktopBackdrop::SubmitCaptureStart(const std::shared_ptr<Starting>& start, const wgd::Direct3D11::IDirect3DDevice& device)
 {
-    struct Job {
-        std::shared_ptr<Starting> start;
-        wgd::Direct3D11::IDirect3DDevice device{nullptr};
-    };
-    static std::mutex jobLock;
-    static std::unordered_map<void*, std::shared_ptr<Job>> jobs;
-    auto job = std::make_shared<Job>(Job{start, device});
-    {
-        std::lock_guard g(jobLock);
-        jobs.emplace(job.get(), job);
+    return SubmitThreadpoolWork([start, device] { RunCaptureStart(start, device); });
+}
+
+void DesktopBackdrop::RetireCaptureObjects(wgc::GraphicsCaptureItem item, wgc::Direct3D11CaptureFramePool pool, wgc::GraphicsCaptureSession session)
+{
+    if (!item && !pool && !session)
+        return;
+    auto retired = std::make_shared<Starting>(nullptr);
+    retired->item = std::move(item);
+    retired->pool = std::move(pool);
+    retired->session = std::move(session);
+    if (SubmitThreadpoolWork([retired] {
+            ApartmentGuard apartment;
+            wgc::GraphicsCaptureItem localItem = std::move(retired->item);
+            wgc::Direct3D11CaptureFramePool localPool = std::move(retired->pool);
+            wgc::GraphicsCaptureSession localSession = std::move(retired->session);
+            CloseWgcObjects(localItem, localPool, localSession);
+            retired->finished.store(true, std::memory_order_release);
+            if (retired->doneEvent)
+                SetEvent(retired->doneEvent);
+        })) {
+        retiredStarting_.push_back(std::move(retired));
+        return;
     }
-    auto callback = [](PTP_CALLBACK_INSTANCE, PVOID ctx) {
-        std::shared_ptr<Job> local;
-        {
-            std::lock_guard g(jobLock);
-            if (auto it = jobs.find(ctx); it != jobs.end()) {
-                local = std::move(it->second);
-                jobs.erase(it);
-            }
-        }
-        if (local && local->start)
-            RunCaptureStart(local->start, local->device);
-    };
-    if (!TrySubmitThreadpoolCallback(callback, job.get(), nullptr)) {
-        std::lock_guard g(jobLock);
-        jobs.erase(job.get());
-        return false;
-    }
-    return true;
+    CloseWgcObjects(retired->item, retired->pool, retired->session);
 }
 
 bool DesktopBackdrop::StartCapture()
@@ -469,13 +474,7 @@ void DesktopBackdrop::StopCapture()
             abandonSession = std::move(starting_->session);
             abandonPool = std::move(starting_->pool); // its handler holds `starting_`
         }
-        try {
-            if (abandonSession)
-                abandonSession.Close();
-            if (abandonPool)
-                abandonPool.Close();
-        } catch (const winrt::hresult_error&) {
-        }
+        RetireCaptureObjects(std::move(abandonItem), std::move(abandonPool), std::move(abandonSession));
         if (!starting_->finished.load(std::memory_order_acquire))
             retiredStarting_.push_back(starting_);
         starting_.reset();
@@ -483,10 +482,7 @@ void DesktopBackdrop::StopCapture()
     desktop_ = nullptr;
     closedRevoker_.revoke();
     closedState_.reset();
-    if (session_)
-        session_.Close();
-    if (pool_)
-        pool_.Close();
+    RetireCaptureObjects(std::move(item_), std::move(pool_), std::move(session_));
     session_ = nullptr;
     pool_ = nullptr;
     item_ = nullptr;

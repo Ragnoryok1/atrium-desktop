@@ -132,11 +132,38 @@ bool CheckSkipFailedWorkerAndMissingDesktop()
     return Require(empty.hwnd == nullptr && empty.isProgman, "empty candidate list returns null target");
 }
 
+bool CheckBoundedAsyncRetirementBudget()
+{
+    HANDLE releaseEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE doneEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!Require(releaseEvent && doneEvent, "create retirement events")) {
+        if (releaseEvent)
+            CloseHandle(releaseEvent);
+        if (doneEvent)
+            CloseHandle(doneEvent);
+        return false;
+    }
+    const bool submitted = atrium::SubmitThreadpoolWork([releaseEvent, doneEvent] {
+        WaitForSingleObject(releaseEvent, 5000);
+        SetEvent(doneEvent);
+    });
+    const ULONGLONG t0 = GetTickCount64();
+    const bool completedInBudget = atrium::WaitBoundedHandles({doneEvent}, 250);
+    const ULONGLONG elapsed = GetTickCount64() - t0;
+    SetEvent(releaseEvent);
+    const bool completedAfterRelease = atrium::WaitBoundedHandles({doneEvent}, 2000);
+    CloseHandle(doneEvent);
+    CloseHandle(releaseEvent);
+    return Require(submitted && !completedInBudget && elapsed < 1000 && completedAfterRelease,
+                   "stalled async close must time out within 250ms budget without blocking caller");
+}
+
 } // namespace
 
 int main()
 {
-    if (!CheckRaisedAndUnsplitDesktop() || !CheckSplitDesktopWithLiveWallpaper() || !CheckSplitDesktopFallbacks() || !CheckSkipFailedWorkerAndMissingDesktop())
+    if (!CheckRaisedAndUnsplitDesktop() || !CheckSplitDesktopWithLiveWallpaper() || !CheckSplitDesktopFallbacks() ||
+        !CheckSkipFailedWorkerAndMissingDesktop() || !CheckBoundedAsyncRetirementBudget())
         return 1;
     std::cout << "Desktop backdrop target selection checks passed.\n";
     return 0;
