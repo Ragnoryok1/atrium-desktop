@@ -109,9 +109,17 @@ private:
     void ShiftStack(Mode mode, size_t index, int by);
     void Sweep(); // drops the cards whose closing animation has finished
     bool Message(Mode mode, UINT m, WPARAM w, LPARAM l, LRESULT& result);
+    std::wstring HitAt(const View& v, POINT pt) const;
+    bool HandleTimerMessage(Mode mode, View& v, WPARAM w);
+    void HandleMouseMove(Mode mode, View& v, POINT pt);
+    void HandleMouseLeave(Mode mode, View& v);
+    void HandleLButtonDown(View& v, POINT pt);
+    void HandleLButtonUp(Mode mode, View& v, POINT pt);
+    void HandleMouseWheel(Mode mode, View& v, WPARAM w);
     void Click(Mode mode, const std::wstring& id);
     void Activate(uint64_t id);
     void Remove(uint64_t id);
+    bool MergeOrIgnoreDuplicate(Notice& n);
     void Changed();       // unread count, layout of visible windows
     void Layout(Mode mode);
     void LayoutCorner(Mode mode, View& v, size_t shownCount);
@@ -140,6 +148,7 @@ private:
     bool expanded_ = false;
     uint64_t nextId_ = 1;
     static constexpr UINT_PTR kPopupTimer = 1;
+    static constexpr double kLeaveMs = 340;
     double timeout_ = 6;
     bool always_ = false;
     bool hideBody_ = false;

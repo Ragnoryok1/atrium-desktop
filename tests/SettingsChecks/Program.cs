@@ -689,7 +689,8 @@ finally
     string cppFacesH = File.ReadAllText(Path.Combine(repoRoot!, "native", "core", "ui", "widget_faces.h"));
     string cppFaces = File.ReadAllText(Path.Combine(repoRoot!, "native", "core", "ui", "widget_faces.cpp"));
     string csFaces = File.ReadAllText(Path.Combine(repoRoot!, "settings", "Atrium.Settings", "WidgetFaces.cs"));
-    string cppWidgets = File.ReadAllText(Path.Combine(repoRoot!, "native", "core", "ui", "desktop_widgets.cpp"));
+    string cppWidgets = File.ReadAllText(Path.Combine(repoRoot!, "native", "core", "ui", "desktop_widgets.cpp")) + "\n" +
+                        File.ReadAllText(Path.Combine(repoRoot!, "native", "core", "ui", "widget_storage.cpp"));
     var zhHans = JsonNode.Parse(File.ReadAllText(Path.Combine(repoRoot!, "locales", "zh-Hans.json")))!["strings"]!.AsObject();
     static string Slice(string src, string marker)
     {

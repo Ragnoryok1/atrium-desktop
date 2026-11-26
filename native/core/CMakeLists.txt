@@ -102,6 +102,7 @@ add_library(atrium_core_lib STATIC
     ui/start_menu_menus.cpp
     ui/start_menu_paint.cpp
     ui/notifications.cpp
+    ui/notification_paint.cpp
     ui/notification_popup.cpp
     ui/tray_panel.cpp
     ui/calendar_panel.cpp
@@ -109,6 +110,8 @@ add_library(atrium_core_lib STATIC
     ui/control_center_paint.cpp
     ui/control_modules.cpp
     ui/desktop_widgets.cpp
+    ui/widget_input.cpp
+    ui/widget_storage.cpp
     ui/widget_stacking.cpp
     ui/folder_stack_popup.cpp
     ui/genie_minimize.cpp
@@ -135,6 +138,9 @@ add_library(atrium_core_lib STATIC
     ui/window_peek.cpp
     ui/window_preview.cpp
     ui/widget_faces.cpp
+    ui/widget_calendar_face.cpp
+    ui/widget_weather_face.cpp
+    ui/widget_network_face.cpp
     shell/notification_listener.cpp
     shell/usb_volume.cpp
     render/bar_painter.cpp
@@ -164,7 +170,7 @@ target_link_libraries(atrium_core_lib PUBLIC
     dwmapi version propsys shlwapi oleaut32 uuid imm32 powrprof wlanapi windowscodecs winhttp setupapi taskschd
     iphlpapi advapi32 comctl32 icu wbemuuid secur32 winsqlite3)
 
-add_executable(atrium_core WIN32 main.cpp core.rc core.manifest)
+add_executable(atrium_core WIN32 main.cpp app_launch.cpp app_runtime.cpp app_bars.cpp app_handlers.cpp core.rc core.manifest)
 # build/win-x64/<Config>/Atrium.exe
 set_target_properties(atrium_core PROPERTIES OUTPUT_NAME "Atrium" RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 # The interface face (D40) next to the exe, as in the package.
