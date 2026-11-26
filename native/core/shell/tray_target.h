@@ -16,6 +16,7 @@ struct TargetKey {
     ShellSession shell;
     std::vector<int> runtime;
     std::wstring identity, exe, tip; // adapter supplies normalized full exe paths
+    bool operator==(const TargetKey&) const = default;
 };
 enum class Resolution { Runtime, Record, Program, Missing, Ambiguous, Conflict, ShellChanged };
 inline const wchar_t* ResolutionName(Resolution value)

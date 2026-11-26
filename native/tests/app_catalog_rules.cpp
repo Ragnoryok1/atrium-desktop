@@ -1,4 +1,7 @@
+#include "shell/app_catalog.h"
 #include "shell/app_catalog_rules.h"
+#include "shell/shell_icon.h"
+#include "shell/task_model.h"
 
 #include <cstdio>
 
@@ -91,12 +94,52 @@ void TestStartMenuShortcutMergeAndDedup()
     Require(apps[3].name == L"lx-music-desktop" && apps[4].name == L"Browser App B", "merged entries must preserve display names and distinct args");
 }
 
+void TestPinIdentityAndEmbeddedIcons()
+{
+    // #156: AppCatalog::PinFor preserves aumid alongside desktop exe target/args.
+    const atrium::CatalogApp hybridApp{L"Hybrid App", L"Contoso.Hybrid_8wekyb3d8bbwe!App", L"Contoso.Hybrid_8wekyb3d8bbwe!App",
+                                       L"C:\\Program Files\\Contoso\\hybrid.exe", L"--mode=dock"};
+    const atrium::PinnedApp hybridPin = atrium::AppCatalog::PinFor(hybridApp);
+    Require(hybridPin.name == L"Hybrid App" && hybridPin.path == L"C:\\Program Files\\Contoso\\hybrid.exe" && hybridPin.args == L"--mode=dock" &&
+                hybridPin.aumid == L"Contoso.Hybrid_8wekyb3d8bbwe!App",
+            "#156: AppCatalog::PinFor preserves aumid with exe target");
+
+    const atrium::CatalogApp inferredAumid{L"Store Hybrid", L"Vendor.Pkg_1234!App", L"", L"C:\\Program Files\\Vendor\\app.exe", L""};
+    const atrium::PinnedApp inferredPin = atrium::AppCatalog::PinFor(inferredAumid);
+    Require(inferredPin.path == L"C:\\Program Files\\Vendor\\app.exe" && inferredPin.aumid == L"Vendor.Pkg_1234!App",
+            "#156: AppCatalog::PinFor keeps AppsFolder AUMID when app.aumid is empty");
+
+    const atrium::CatalogApp desktopOnly{L"Tool", L"C:\\Start\\Tool.lnk", L"", L"C:\\Tools\\tool.exe", L""};
+    const atrium::PinnedApp desktopPin = atrium::AppCatalog::PinFor(desktopOnly);
+    Require(desktopPin.path == L"C:\\Tools\\tool.exe" && desktopPin.aumid.empty(), "#156: AppCatalog::PinFor leaves aumid empty for plain desktop shortcut");
+
+    const atrium::CatalogApp packagedOnly{L"Settings", L"windows.immersivecontrolpanel_cw5n1h2txyewy!microsoft.windows.immersivecontrolpanel", L"", L"", L""};
+    const atrium::PinnedApp packagedPin = atrium::AppCatalog::PinFor(packagedOnly);
+    Require(packagedPin.path.empty() && packagedPin.aumid == L"windows.immersivecontrolpanel_cw5n1h2txyewy!microsoft.windows.immersivecontrolpanel",
+            "#156: AppCatalog::PinFor pins packaged app by AUMID");
+
+    // ResolveTaskPin preserves AUMID-first key and path target.
+    const atrium::detail::TaskPin resolvedHybrid = atrium::detail::ResolveTaskPin(hybridPin);
+    Require(resolvedHybrid.aumid == L"Contoso.Hybrid_8wekyb3d8bbwe!App" && resolvedHybrid.key == L"contoso.hybrid_8wekyb3d8bbwe!app" &&
+                resolvedHybrid.target == L"c:\\program files\\contoso\\hybrid.exe",
+            "#156: ResolveTaskPin resolves hybrid pin key from preserved aumid");
+
+    const atrium::detail::TaskPin resolvedWeb = atrium::detail::ResolveTaskPin(atrium::PinnedApp{L"Web", L"C:\\Edge\\msedge.exe", L"--app-id=abc", L""});
+    Require(resolvedWeb.specific && resolvedWeb.key == L"c:\\edge\\msedge.exe", "#156: ResolveTaskPin marks --app-id pin as specific");
+
+    // HasEmbeddedExeIcon handles empty/missing paths and expands %SystemRoot%.
+    Require(!atrium::HasEmbeddedExeIcon(L""), "HasEmbeddedExeIcon rejects empty path");
+    Require(!atrium::HasEmbeddedExeIcon(L"C:\\NonExistent\\missing_binary_12345.exe"), "HasEmbeddedExeIcon rejects missing path");
+    Require(atrium::HasEmbeddedExeIcon(L"%SystemRoot%\\explorer.exe"), "HasEmbeddedExeIcon finds embedded icons in explorer.exe");
+}
+
 } // namespace
 
 int main()
 {
     TestWordBoundaryFilters();
     TestStartMenuShortcutMergeAndDedup();
+    TestPinIdentityAndEmbeddedIcons();
     if (g_failures > 0)
         return 1;
     std::printf("app catalog rules: all checks passed\n");

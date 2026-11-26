@@ -1,6 +1,7 @@
 #include "shell/tray_click.h"
-#include "shell/tray_target.h"
 #include "shell/tray_image.h"
+#include "shell/tray_model.h"
+#include "shell/tray_target.h"
 
 #include <iostream>
 #include <vector>
@@ -185,6 +186,54 @@ void TestDoubleContinuation()
     r = Dispatch(Action::Double, true, [](Route) { return int32_t(1); }, unseen);
     Check(r.outcome == Outcome::AcceptedUnconfirmed && r.attempts.size() == 1, "partial toolbar delivery cannot replay a gesture");
 }
+
+void TestPointerRightFallbackAndActionTarget()
+{
+    auto unseen = [](bool) { return false; };
+    auto seen = [](bool) { return true; };
+
+    // #28: XAML ShowContextMenu returning S_OK (0) without observed popup permits physical pointer fallback.
+    const auto xamlOk = Dispatch(Action::Right, false, [](Route) { return int32_t(0); }, unseen);
+    Check(xamlOk.outcome == Outcome::AcceptedUnconfirmed && ShouldAttemptPointerRightFallback(xamlOk, false),
+          "#28 XAML ShowContextMenu S_OK AcceptedUnconfirmed permits pointer right fallback");
+
+    // Provider timeout must NOT repeat via physical pointer fallback.
+    const auto timedOut = Dispatch(Action::Right, false, [](Route) { return kProviderTimeout; }, unseen);
+    Check(timedOut.outcome == Outcome::AcceptedUnconfirmed && !ShouldAttemptPointerRightFallback(timedOut, false),
+          "kProviderTimeout blocks pointer right fallback");
+
+    // Classic toolbar S_FALSE (1) or classic=true blocks pointer right fallback.
+    const auto sFalse = Dispatch(Action::Right, false, [](Route) { return int32_t(1); }, unseen);
+    Check(sFalse.outcome == Outcome::AcceptedUnconfirmed && !ShouldAttemptPointerRightFallback(sFalse, false), "S_FALSE blocks pointer right fallback");
+    Check(!ShouldAttemptPointerRightFallback(xamlOk, true), "classic toolbar blocks pointer right fallback");
+
+    // Observed menu evidence blocks pointer right fallback.
+    const auto observed = Dispatch(Action::Right, false, [](Route) { return int32_t(0); }, seen);
+    Check(observed.outcome == Outcome::Observed && !ShouldAttemptPointerRightFallback(observed, false), "Observed outcome blocks pointer right fallback");
+
+    // Unavailable permits fallback on XAML.
+    const auto unavail = Dispatch(Action::Right, false, [](Route) { return int32_t(-1); }, unseen);
+    Check(unavail.outcome == Outcome::Unavailable && ShouldAttemptPointerRightFallback(unavail, false),
+          "Unavailable XAML right-click permits pointer fallback");
+
+    // TrayIcon::ActionTarget() vs Target() separation.
+    const ShellSession shell{42, 100, 200};
+    atrium::TrayIcon icon;
+    icon.tip = L"App";
+    icon.exe = L"app.exe";
+    icon.hostKey = L"hwnd:1:1";
+    icon.recordId = L"hosted:1";
+    icon.runtimeId = {10};
+    icon.shell = shell;
+    Check(icon.ActionTarget().identity == L"hosted:1" && icon.ActionTarget().runtime == std::vector<int>{10},
+          "ActionTarget falls back to Target when explorerTarget is unset");
+
+    icon.explorerTarget = TargetKey{shell, {20, 30}, L"uid:2:2:2", L"app.exe", L"App"};
+    Check(icon.Target().identity == L"hosted:1" && icon.Target().runtime == std::vector<int>{10},
+          "Target preserves original icon identity when explorerTarget is set");
+    Check(icon.ActionTarget().identity == L"uid:2:2:2" && icon.ActionTarget().runtime == std::vector<int>{20, 30},
+          "ActionTarget returns strict Explorer binding when explorerTarget is set");
+}
 } // namespace
 
 int main()
@@ -194,6 +243,7 @@ int main()
     TestDoubleContinuation();
     TestClassicGesture();
     TestMenuFollow();
+    TestPointerRightFallbackAndActionTarget();
     if (g_failed)
         return 1;
     std::cout << "tray dispatch: all scenarios passed\n";

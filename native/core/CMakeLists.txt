@@ -52,8 +52,12 @@ add_library(atrium_core_lib STATIC
     shell/shell_icon.cpp
     shell/task_launch.cpp
     shell/task_model.cpp
+    shell/task_model_actions.cpp
+    shell/task_model_icons.cpp
+    shell/task_model_windows.cpp
     shell/app_processes.cpp
     shell/app_catalog.cpp
+    shell/app_catalog_stamp.cpp
     shell/start_pins.cpp
     shell/start_layout.cpp
     shell/win_key.cpp
@@ -79,6 +83,7 @@ add_library(atrium_core_lib STATIC
     shell/displays.cpp
     shell/tray_host.cpp
     shell/tray_model.cpp
+    shell/tray_actions.cpp
     shell/tray_match.cpp
     shell/shell_verbs.cpp
     shell/jump_list.cpp
@@ -91,8 +96,11 @@ add_library(atrium_core_lib STATIC
     ui/popup_theme.cpp
     ui/canvas.cpp
     ui/start_menu.cpp
+    ui/start_menu_data.cpp
     ui/start_menu_input.cpp
+    ui/start_menu_layout.cpp
     ui/start_menu_menus.cpp
+    ui/start_menu_paint.cpp
     ui/notifications.cpp
     ui/notification_popup.cpp
     ui/tray_panel.cpp
@@ -114,9 +122,11 @@ add_library(atrium_core_lib STATIC
     ui/stage_manager.cpp
     ui/stage_drag.cpp
     ui/stage_close.cpp
+    ui/stage_layout.cpp
     ui/stage_paint.cpp
     ui/stage_restore.cpp
     ui/stage_fade.cpp
+    ui/stage_windows.cpp
     ui/window_snapshot.cpp
     shell/weather.cpp
     shell/bluetooth_batteries.cpp

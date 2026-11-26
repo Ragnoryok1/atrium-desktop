@@ -537,8 +537,11 @@ void ApplyDesktopAndSystemSettings(const Settings& s)
     const bool keyStart = s.bar && s.winKeyStart && !LowIntegrity(), keyNumbers = s.bar && s.winNumbers && !LowIntegrity();
     if (keyStart != g_app.winKeyStart || keyNumbers != g_app.winNumbers || bool(g_app.winKey) != (keyStart || keyNumbers)) {
         g_app.winKey.reset();
-        if (keyStart || keyNumbers)
+        if (keyStart || keyNumbers) {
             g_app.winKey = std::make_unique<WinKey>(g_app.host, WM_WIN_KEY, keyStart, keyNumbers);
+            if (g_app.start)
+                g_app.winKey->SetStartMenuOpen(g_app.start->Visible());
+        }
         g_app.winKeyStart = keyStart;
         g_app.winNumbers = keyNumbers;
     }
@@ -570,24 +573,16 @@ void ApplySettings(const Settings& s)
     g_app.displaySettings = s;
     Theme::SetGlass(s.tint, s.transparency);
     const float radius = float(std::clamp(s.cornerRadius, 8.0, std::max(8.0, s.height / 2)));
-    g_app.start->SetRadius(radius);
-    g_app.trayPanel->SetRadius(radius);
-    g_app.extras->Apply(s, radius);
-    g_app.control->SetRadius(radius);
-    g_app.control->SetBarHeight(float(s.height));
-    g_app.calendar->SetRadius(radius);
-    g_app.calendar->SetBarHeight(float(s.height));
-    g_app.start->SetBarHeight(float(s.height));
-    g_app.start->SetShowTray(s.startTray);
-    g_app.start->SetShowStatus(s.startStatus);
-    g_app.start->SetCentered(s.startCentered);
-    g_app.start->SetPreferredSize(s.startSize);
-    g_app.start->SetPreferredIcon(s.startIcon);
-    g_app.notes->SetRadius(radius);
-    g_app.notes->SetOptions(s.notifyTimeout, s.notifyHideBody, s.notifyPlacement, s.notifyFullscreen, s.notifyAlways);
+    g_app.start->SetRadius(radius), g_app.trayPanel->SetRadius(radius), g_app.extras->Apply(s, radius);
+    g_app.control->SetRadius(radius), g_app.control->SetBarHeight(float(s.height));
+    g_app.calendar->SetRadius(radius), g_app.calendar->SetBarHeight(float(s.height));
+    g_app.start->SetBarHeight(float(s.height)), g_app.start->SetShowTray(s.startTray), g_app.start->SetShowStatus(s.startStatus);
+    g_app.start->SetCentered(s.startCentered), g_app.start->SetPreferredSize(s.startSize), g_app.start->SetPreferredIcon(s.startIcon);
+    g_app.notes->SetRadius(radius), g_app.notes->SetOptions(s.notifyTimeout, s.notifyHideBody, s.notifyPlacement, s.notifyFullscreen, s.notifyAlways);
     ApplyNotificationSources(s, badgesChanged);
     g_app.tasks->SetPins(s.pins.value_or(std::vector<PinnedApp>{}));
     g_app.tasks->SetShowRunning(s.showRunning);
+    ApplyDesktopAndSystemSettings(s);
     SyncDisplayBars(s);
     if (g_app.barOn != s.bar) {
         g_app.barOn = s.bar;
@@ -596,7 +591,6 @@ void ApplySettings(const Settings& s)
         ForBars([&](Bar& bar) { bar.SetVisible(s.bar); });
         Log(L"modules: bar %s", s.bar ? L"on" : L"off");
     }
-    ApplyDesktopAndSystemSettings(s);
 }
 
 void ShowItemMenu(const std::wstring& key, POINT pt) { ShowTaskItemMenu(MenuEnv(), key, pt); }
@@ -1014,8 +1008,11 @@ bool HandleHostTimer(HWND h, WPARAM w)
         }
         return true;
     }
-    if (w == kTrayFocusTimer)
-        return KillTimer(h, kTrayFocusTimer), RestoreHiddenOverflowFocus(g_app.trayPanel->Previous()), true;
+    if (w == kTrayFocusTimer) {
+        if (g_app.trayPanel && g_app.trayPanel->MenuSessionActive())
+            return SetTimer(h, kTrayFocusTimer, 150, nullptr), true;
+        return KillTimer(h, kTrayFocusTimer), RestoreHiddenOverflowFocus(g_app.trayPanel ? g_app.trayPanel->Previous() : nullptr), true;
+    }
     return false;
 }
 
@@ -1032,10 +1029,10 @@ void HandleTaskbarCreated()
 }
 void HandleCatalogMessage(bool listChanged)
 {
-    if (g_app.start)
-        g_app.start->Refresh(listChanged);
-    if (g_app.extras)
-        g_app.extras->OnCatalogChanged(listChanged);
+    if (listChanged && g_app.tasks)
+        g_app.tasks->OnCatalogLoaded();
+    g_app.start ? g_app.start->Refresh(listChanged) : void();
+    g_app.extras ? g_app.extras->OnCatalogChanged(listChanged) : void();
 }
 
 LRESULT CALLBACK HostProc(HWND h, UINT m, WPARAM w, LPARAM l)
@@ -1349,6 +1346,10 @@ void InitializeSubsystems(HINSTANCE instance, Settings& settings)
     ApplySettings(settings);
     g_app.bar->SetItems(BarItems());
     g_app.server = std::make_unique<SettingsServer>(g_app.host, settings);
+    g_app.start->onOpenChanged = [](bool open) {
+        if (g_app.winKey)
+            g_app.winKey->SetStartMenuOpen(open);
+    };
     g_app.start->onSize = [](const std::wstring& name) { g_app.server->Modify([&](Settings& s) { s.startSize = name; }); };
     g_app.start->onIcon = [](const std::wstring& name) { g_app.server->Modify([&](Settings& s) { s.startIcon = name; }); };
     if (settings.startSize.empty())
@@ -1356,13 +1357,11 @@ void InitializeSubsystems(HINSTANCE instance, Settings& settings)
     if (settings.startIcon.empty())
         g_app.start->onIcon(g_app.start->IconSizeName());
     g_app.start->onPin = [](const PinnedApp& pin) {
-        if (!g_app.server)
-            return;
-        g_app.server->Modify([&](Settings& s) {
-            auto pins = s.pins.value_or(std::vector<PinnedApp>{});
-            if (AddUniquePin(pins, pin))
-                s.pins = std::move(pins);
-        });
+        if (g_app.server)
+            g_app.server->Modify([&](Settings& s) {
+                if (auto pins = s.pins.value_or(std::vector<PinnedApp>{}); AddUniquePin(pins, pin))
+                    s.pins = std::move(pins);
+            });
     };
 }
 

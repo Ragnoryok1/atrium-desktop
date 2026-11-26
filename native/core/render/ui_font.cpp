@@ -137,7 +137,12 @@ void DrawUiText(ID2D1RenderTarget* rt, IDWriteFactory* dw, const std::wstring& s
         rt->DrawText(rendered.c_str(), UINT32(rendered.size()), f, r, b, options);
         return;
     }
+    const bool clip = (options & D2D1_DRAW_TEXT_OPTIONS_CLIP) != 0;
+    if (clip)
+        rt->PushAxisAlignedClip(r, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     rt->DrawTextLayout(D2D1::Point2F(r.left, r.top), layout.get(), b, options);
+    if (clip)
+        rt->PopAxisAlignedClip();
 }
 
 } // namespace atrium

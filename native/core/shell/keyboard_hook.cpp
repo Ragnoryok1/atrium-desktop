@@ -241,7 +241,7 @@ LRESULT CALLBACK KeyboardHook::MouseHookProc(int code, WPARAM wparam, LPARAM lpa
     if (wparam != WM_LBUTTONDOWN && wparam != WM_RBUTTONDOWN && wparam != WM_MBUTTONDOWN)
         return CallNextHookEx(nullptr, code, wparam, lparam);
     const auto* mouse = reinterpret_cast<const MSLLHOOKSTRUCT*>(lparam);
-    if (!mouse)
+    if (!mouse || mouse->dwExtraInfo == kAtriumSyntheticKey)
         return CallNextHookEx(nullptr, code, wparam, lparam);
     const LPARAM packedPt = MAKELPARAM(mouse->pt.x, mouse->pt.y);
     {

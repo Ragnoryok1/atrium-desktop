@@ -38,6 +38,7 @@
 namespace atrium {
 
 enum class TrayHostYieldReason { None, OtherProcess, RapidLoss, StartAllBack };
+enum class HostSendStatus { NotSent, Partial, Sent };
 
 const wchar_t* YieldReasonName(TrayHostYieldReason reason);
 // Every Shell_TrayWnd in z-order with its program, logged when that changes (#146).
@@ -201,8 +202,9 @@ struct HostIcon {
 
 class TrayHost {
 public:
-    // Posts `msg` (wParam 0) to `notify` when the icons change. `readyWaitMs` and `startDelayMs` are for tests only.
-    TrayHost(HWND notify, UINT msg, DWORD readyWaitMs = 3000, DWORD startDelayMs = 0, std::function<void()> onYieldChange = {});
+    // Posts `msg` (wParam 0) to `notify` when the icons change (unless `onIconsChange` handles it). `readyWaitMs` and `startDelayMs` are for tests only.
+    TrayHost(HWND notify, UINT msg, DWORD readyWaitMs = 3000, DWORD startDelayMs = 0, std::function<void()> onYieldChange = {},
+             std::function<void()> onIconsChange = {});
     ~TrayHost();
     TrayHost(const TrayHost&) = delete;
     TrayHost& operator=(const TrayHost&) = delete;
@@ -218,9 +220,9 @@ public:
     std::vector<std::wstring> Flashing() const;
     std::vector<FlashingTrayIcon> FlashingIcons() const;
     // Sends the shell's notifications for `action` on `key` at the screen point `at`
-    // (the panel's pointer). False when the app cannot be told (gone, no callback,
-    // an elevated app's window refusing Atrium's messages).
-    bool Send(const std::wstring& key, tray::HostAction action, POINT at, RECT cell = {});
+    // (the panel's pointer). Returns NotSent when nothing could be delivered, Partial
+    // when delivery failed mid-sequence, or Sent when all notifications were queued.
+    HostSendStatus Send(const std::wstring& key, tray::HostAction action, POINT at, RECT cell = {});
     // The pointer rests on `key` (empty: on none): the arrival, and for a version 4
     // app drawing its own tooltip, its popup request after a moment and its close.
     void Hover(const std::wstring& key, POINT at, RECT cell = {});
@@ -277,6 +279,7 @@ private:
     UINT msg_;
     DWORD startDelayMs_ = 0;
     std::function<void()> onYieldChange_;
+    std::function<void()> onIconsChange_;
     UINT taskbarCreated_ = 0, quit_ = 0, hover_ = 0;
     HANDLE ready_ = nullptr, stop_ = nullptr;
     std::atomic<HWND> window_{nullptr};

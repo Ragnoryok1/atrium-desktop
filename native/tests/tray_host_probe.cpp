@@ -169,14 +169,14 @@ void ExerciseIconActions(TrayHost& host, HWND window)
     const POINT at{321, 654};
     if (a) {
         g_got.clear();
-        Check(host.Send(a->key, tray::HostAction::Left, at), "send a click (protocol 0)");
+        Check(host.Send(a->key, tray::HostAction::Left, at) == HostSendStatus::Sent, "send a click (protocol 0)");
         Pump(150);
         Check(g_got.size() == 3 && g_got[0].first == 1 && g_got[1].second == WM_LBUTTONDOWN && g_got[2].second == WM_LBUTTONUP,
               "protocol 0 click: id in wParam, MOVE DOWN UP");
     }
     if (b) {
         g_got.clear();
-        Check(host.Send(b->key, tray::HostAction::Right, at), "send a right click (protocol 4)");
+        Check(host.Send(b->key, tray::HostAction::Right, at) == HostSendStatus::Sent, "send a right click (protocol 4)");
         Pump(150);
         Check(g_got.size() == 4 && LOWORD(g_got[3].second) == WM_CONTEXTMENU && HIWORD(g_got[3].second) == 2 && short(LOWORD(g_got[3].first)) == 321 &&
                   short(HIWORD(g_got[3].first)) == 654,

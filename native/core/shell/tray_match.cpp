@@ -444,7 +444,7 @@ bool HostedMatchesTier(const HostedEntry& h, const ExplorerEntry& e, int tier, b
         uint32_t ePid = 0;
         uint64_t eHwnd = 0, eUid = 0, hHwnd = 0, hUid = 0;
         const bool hwndUidMatch = compatExe && ParseExplorerUidKey(e.recordId, ePid, eHwnd, eUid) && ParseHostHwndKey(h.key, hHwnd, hUid) && eHwnd != 0 &&
-                                  hHwnd != 0 && eHwnd == hHwnd && eUid == hUid;
+                                  hHwnd != 0 && eHwnd == hHwnd && eUid == hUid && (ePid == 0 || h.pid == 0 || ePid == h.pid);
         return (compatExe && h.key.starts_with(L"guid:") && e.recordId == h.key) || (sameExe && !e.recordId.empty() && e.recordId == h.key) || hwndUidMatch;
     }
     case 1: return sameExe && h.hasUid && uniqueUid && UidOf(e.recordId) == h.uid;
@@ -460,6 +460,29 @@ bool HostedMatchesTier(const HostedEntry& h, const ExplorerEntry& e, int tier, b
     case 6: return sameExe;
     default: return false;
     }
+}
+bool StrictActionTargetCompatible(const HostedEntry& h, const ExplorerEntry& e, int tier)
+{
+    if (tier > 2 || e.recordId.empty())
+        return false;
+    const bool compatExe = e.exe.empty() || h.exe.empty() || e.exe == h.exe;
+    if (h.key.starts_with(L"guid:"))
+        return compatExe && e.recordId == h.key;
+    if (e.recordId.starts_with(L"guid:"))
+        return false;
+    if (tier > 0 && (h.exe.empty() || e.exe != h.exe))
+        return false;
+    uint32_t ePid = 0;
+    uint64_t eHwnd = 0, eUid = 0;
+    if (ParseExplorerUidKey(e.recordId, ePid, eHwnd, eUid)) {
+        if (ePid != 0 && h.pid != 0 && ePid != h.pid)
+            return false;
+        if (h.hasUid && eUid != h.uid)
+            return false;
+    } else if (h.hasUid && UidOf(e.recordId) != h.uid) {
+        return false;
+    }
+    return true;
 }
 size_t FallbackHostedMatch(const HostedEntry& h, const std::vector<ExplorerEntry>& explorer)
 {
@@ -566,6 +589,7 @@ MergedTrayView MergeHostedIcons(const std::vector<HostedEntry>& hosted, const st
 {
     MergedTrayView view;
     view.hostedFallback.assign(hosted.size(), kNone);
+    view.hostedTarget.assign(hosted.size(), kNone);
     std::vector<bool> usedExp(explorer.size(), false);
     for (int tier = 0; tier < 7; ++tier)
         for (size_t hi = 0; hi < hosted.size(); ++hi) {
@@ -574,7 +598,10 @@ MergedTrayView MergeHostedIcons(const std::vector<HostedEntry>& hosted, const st
             const bool uniqueUid = tier != 1 || UniqueUnpairedUid(hosted, explorer, view.hostedFallback, usedExp, hi);
             for (size_t ei = 0; ei < explorer.size(); ++ei)
                 if (!usedExp[ei] && HostedMatchesTier(hosted[hi], explorer[ei], tier, uniqueUid)) {
-                    view.hostedFallback[hi] = ei, usedExp[ei] = true;
+                    view.hostedFallback[hi] = ei;
+                    if (StrictActionTargetCompatible(hosted[hi], explorer[ei], tier))
+                        view.hostedTarget[hi] = ei;
+                    usedExp[ei] = true;
                     break;
                 }
         }

@@ -30,6 +30,7 @@
 #include <vector>
 
 struct IUIAutomation;
+struct IUIAutomationCacheRequest;
 struct IUIAutomationCondition;
 
 namespace atrium {
@@ -56,7 +57,7 @@ bool IsOfficialWeChatRow(const std::wstring& chat);
 WeChatRow ParseWeChatRow(const std::wstring& name, const std::wstring& fallbackText = {}, const std::wstring& itemStatus = {});
 bool MatchesWeChatCellName(const std::wstring& cellName, const std::wstring& chat);
 std::vector<Notice> DiffWeChatRows(const std::vector<std::pair<std::wstring, WeChatRow>>& rows, bool baseline, bool blockOfficial,
-                                   std::map<std::wstring, WeChatChatState>& states);
+                                   std::map<std::wstring, WeChatChatState>& states, bool allowOpenSummary = true);
 int SumWeChatUnread(const std::vector<std::pair<std::wstring, WeChatRow>>& rows, bool blockOfficial);
 
 enum class WeChatBusyState { None, Foreground, ForegroundShown, Dialog };
@@ -79,6 +80,7 @@ bool ShouldBreakWeChatCooldown(WeChatBusyState prev, WeChatBusyState now);
 struct WeChatThrottleOutput {
     DWORD waitMs = 0;
     bool requeueFlashWake = false;
+    // Retained only for throttle-contract tests; PollWeChatInstance preserves reading/baseline (#190).
     bool clearReadingAndBaseline = false;
     ULONGLONG nextBusyUntilTick = 0;
     bool nextSampledWhileBusy = false;
@@ -121,7 +123,10 @@ public:
     void OpenChat(const std::wstring& chat, DWORD pid = 0);
 
 private:
+    struct LoopState;
     void Run();
+    void PublishStatus(std::set<DWORD> activeReading, int totalUnread);
+    DWORD StepInstances(IUIAutomation* uia, IUIAutomationCondition* cells, IUIAutomationCacheRequest* cache, LoopState& loop, ULONGLONG tick);
     HWND notify_;
     UINT msg_;
     UINT badgeMsg_ = 0;

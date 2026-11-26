@@ -86,6 +86,18 @@ template<class Invoke, class Observe> DispatchResult Dispatch(Action action, boo
     return result;
 }
 
+// Permit XAML ShowContextMenu returning S_OK without observable menu evidence (#28),
+// while blocking provider timeouts, classic toolbars/S_FALSE, and already-observed outcomes.
+inline bool ShouldAttemptPointerRightFallback(const DispatchResult& result, bool classic)
+{
+    if (classic || result.outcome == Outcome::Observed)
+        return false;
+    if (result.outcome == Outcome::Unavailable)
+        return true;
+    return !result.attempts.empty() && result.attempts.back().route == Route::ContextMenu && result.attempts.back().status == 0 &&
+           !result.attempts.back().observed;
+}
+
 // Next to the click: above and to the right of it, else below or to the left; in `work`.
 inline POINT PlaceMenu(POINT at, int w, int h, const RECT& work)
 {

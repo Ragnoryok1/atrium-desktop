@@ -183,6 +183,78 @@ void CheckDodgeOverlap()
     Require(!WindowOverlapsBar(RECT{1260, 500, 1800, 1070}, barZone), "window starting right at the bar right edge does not trigger dodge");
     Require(!WindowOverlapsBar(RECT{100, 100, 600, 800}, barZone), "window elsewhere on screen does not trigger dodge");
 }
+
+void CheckAutoHideEdgeZones()
+{
+    // #189: full-length summon strip and reveal zone on both negative and positive extended monitors.
+    const RECT negMon{-1920, 0, 0, 1080};
+    const RECT posMon{1920, -200, 3840, 880};
+    Require(Same(MonitorEdgeStrip(BarEdge::Bottom, negMon, 2), {-1920, 1078, 0, 1080}), "#189: bottom strip on negative monitor");
+    Require(Same(MonitorEdgeStrip(BarEdge::Top, posMon, 2), {1920, -200, 3840, -198}), "#189: top strip on positive extended monitor");
+    Require(Same(MonitorEdgeStrip(BarEdge::Left, negMon, 2), {-1920, 0, -1918, 1080}), "#189: left strip on negative monitor");
+    Require(Same(MonitorEdgeStrip(BarEdge::Right, posMon, 2), {3838, -200, 3840, 880}), "#189: right strip on positive extended monitor");
+    const RECT zeroStrip = MonitorEdgeStrip(BarEdge::Bottom, negMon, 0);
+    const RECT emptyMonStrip = MonitorEdgeStrip(BarEdge::Bottom, RECT{0, 0, 0, 0}, 2);
+    Require(IsRectEmpty(&zeroStrip) && IsRectEmpty(&emptyMonStrip), "#189: invalid thickness or monitor produces empty strip");
+
+    for (const RECT& mon : {negMon, posMon}) {
+        const LONG midX = (mon.left + mon.right) / 2;
+        const LONG midY = (mon.top + mon.bottom) / 2;
+        Require(InEdgeSummonZone(BarEdge::Bottom, POINT{mon.left + 10, mon.bottom - 1}, mon), "#189: bottom summon zone spans full monitor width");
+        Require(!InEdgeSummonZone(BarEdge::Bottom, POINT{midX, mon.bottom - 3}, mon), "#189: bottom summon zone stops after strip thickness");
+        Require(!InEdgeSummonZone(BarEdge::Bottom, POINT{midX, mon.bottom}, mon), "#189: bottom summon zone excludes past monitor edge");
+        Require(InEdgeSummonZone(BarEdge::Top, POINT{mon.right - 10, mon.top}, mon), "#189: top summon zone");
+        Require(InEdgeSummonZone(BarEdge::Left, POINT{mon.left + 1, midY}, mon), "#189: left summon zone");
+        Require(InEdgeSummonZone(BarEdge::Right, POINT{mon.right - 2, midY}, mon), "#189: right summon zone");
+    }
+
+    // Reveal zone covers both the full-length summon strip and the bar + outer screen margin.
+    const RECT win{-1260, 990, -660, 1070}; // 600x80 window above negMon bottom with 10 px outer margin
+    const D2D1_RECT_F bar{20.f, 10.f, 580.f, 70.f};
+    Require(InEdgeRevealZone(BarEdge::Bottom, POINT{-1800, 1079}, win, negMon, bar), "#189: reveal zone accepts far corner inside monitor summon strip");
+    Require(InEdgeRevealZone(BarEdge::Bottom, POINT{-960, 1074}, win, negMon, bar), "#189: reveal zone accepts outer margin between glass and monitor edge");
+    Require(InEdgeRevealZone(BarEdge::Bottom, POINT{-960, 1020}, win, negMon, bar), "#189: reveal zone accepts glass interior");
+    Require(!InEdgeRevealZone(BarEdge::Bottom, POINT{-960, 989}, win, negMon, bar), "#189: reveal zone rejects above bar window top");
+    Require(!InEdgeRevealZone(BarEdge::Bottom, POINT{-1250, 1020}, win, negMon, bar), "#189: reveal zone rejects outside bar span");
+    Require(!InEdgeRevealZone(BarEdge::Bottom, POINT{-1500, 1030}, win, negMon, bar), "#189: reveal zone rejects beside bar outside summon strip");
+}
+
+void CheckTaskbarWorkSync()
+{
+    // #191: taskbar edge detection, work-area hold, expansion/shrink, and snapshot sync.
+    const RECT mon{0, 0, 1920, 1080};
+    const RECT tbBottom{0, 1032, 1920, 1080};
+    const RECT tbTop{0, 0, 1920, 48};
+    const RECT tbLeft{0, 0, 64, 1080};
+    const RECT tbRight{1856, 0, 1920, 1080};
+
+    Require(TaskbarEdgeOnMonitor(tbBottom, mon) == BarEdge::Bottom, "#191: detects bottom taskbar");
+    Require(TaskbarEdgeOnMonitor(tbTop, mon) == BarEdge::Top, "#191: detects top taskbar");
+    Require(TaskbarEdgeOnMonitor(tbLeft, mon) == BarEdge::Left, "#191: detects left taskbar");
+    Require(TaskbarEdgeOnMonitor(tbRight, mon) == BarEdge::Right, "#191: detects right taskbar");
+    Require(!TaskbarEdgeOnMonitor(RECT{0, 1078, 1920, 1080}, mon).has_value(), "#191: auto-hidden thin taskbar returns nullopt");
+    Require(!TaskbarEdgeOnMonitor(mon, mon).has_value(), "#191: full-monitor rect is not a docked taskbar");
+
+    const RECT workBottom{0, 0, 1920, 1032};
+    const RECT workLeft{64, 0, 1920, 1080};
+    Require(WorkHoldsTaskbarEdge(tbBottom, mon, workBottom), "#191: work bottom aligns with taskbar top");
+    Require(!WorkHoldsTaskbarEdge(tbBottom, mon, mon), "#191: expanded work area no longer holds taskbar edge");
+    Require(WorkHoldsTaskbarEdge(tbLeft, mon, workLeft), "#191: work left aligns with taskbar right");
+
+    Require(WorkAreaEdgeExpanded(workBottom, mon, mon, BarEdge::Bottom), "#191: bottom work area expanded to monitor edge");
+    Require(WorkAreaEdgeExpanded(RECT{0, 0, 1920, 1000}, RECT{0, 0, 1920, 1032}, mon, BarEdge::Bottom), "#191: bottom work area expanded toward monitor edge");
+    Require(!WorkAreaEdgeExpanded(workBottom, workBottom, mon, BarEdge::Bottom), "#191: unchanged restricted bottom work area not expanded");
+    Require(WorkAreaEdgeExpanded(workLeft, mon, mon, BarEdge::Left), "#191: left work area expanded to monitor edge");
+
+    const auto snap = MakeTaskbarSnapshot(reinterpret_cast<HMONITOR>(1), tbBottom, mon, workBottom, true);
+    Require(snap.has_value() && snap->edge == BarEdge::Bottom, "#191: MakeTaskbarSnapshot captures docked bottom taskbar");
+    Require(!MakeTaskbarSnapshot(reinterpret_cast<HMONITOR>(1), tbBottom, mon, mon, true).has_value(),
+            "#191: MakeTaskbarSnapshot rejects already-expanded work area when docked edge required");
+    Require(!WorkAreaSnapshotSynced(*snap, workBottom, true), "#191: release not synced while work still holds taskbar");
+    Require(WorkAreaSnapshotSynced(*snap, mon, true), "#191: release synced once work expands");
+    const auto restoreSnap = MakeTaskbarSnapshot(reinterpret_cast<HMONITOR>(1), tbBottom, mon, mon, false);
+    Require(restoreSnap.has_value() && WorkAreaSnapshotSynced(*restoreSnap, workBottom, false), "#191: restore synced once work shrinks back");
+}
 } // namespace
 
 int main()
@@ -195,6 +267,8 @@ int main()
     CheckTopmostCoverPolicy();
     CheckBarReserve();
     CheckDodgeOverlap();
+    CheckAutoHideEdgeZones();
+    CheckTaskbarWorkSync();
     if (g_failed)
         return 1;
     std::cout << "bar edge: all checks passed\n";

@@ -152,6 +152,44 @@ void CheckWeChatDiff()
     Require(DiffWeChatRows({{L"g", {L"Group", L"m1", 1, true}}}, true, false, muteStates).empty(), "muted chat suppressed");
     auto unmuted = DiffWeChatRows({{L"g", {L"Group", L"m2", 2, false}}}, true, false, muteStates);
     Require(unmuted.size() == 1 && unmuted[0].unread && unmuted[0].title == L"Group", "unmuted chat alerts again");
+
+    // #190: open-chat (unread == 0) summary change alerts once; unchanged/unseen/muted/collapsed/blocked ignored;
+    // oldUnread > 0 -> 0 stays withdrawal; baseline == false syncs silently.
+    std::map<std::wstring, WeChatChatState> openStates{
+        {L"open", {0, L"msg1"}}, {L"muted0", {0, L"m1"}}, {L"collapsed0", {0, L"c1"}}, {L"official0", {0, L"o1"}}, {L"wasunread", {2, L"old"}},
+    };
+    Require(DiffWeChatRows({{L"open", {L"OpenChat", L"msg1", 0}}}, true, false, openStates).empty(), "#190: unchanged unread==0 summary is ignored");
+    Require(DiffWeChatRows({{L"unseen0", {L"Unseen", L"hi", 0}}}, true, false, openStates).empty(),
+            "#190: unseen unread==0 chat does not alert on first appearance");
+    Require(DiffWeChatRows({{L"muted0", {L"Muted0", L"m2", 0, true}}}, true, false, openStates).empty(), "#190: muted unread==0 summary change is ignored");
+    Require(DiffWeChatRows({{L"collapsed0", {L"Collapsed0", L"c2", 0, false, true}}}, true, false, openStates).empty(),
+            "#190: collapsed unread==0 summary change is ignored");
+    Require(DiffWeChatRows({{L"official0", {L"Official0", L"o2", 0, false, false, true}}}, true, true, openStates).empty(),
+            "#190: blocked official unread==0 summary change is ignored");
+
+    const auto openAlert = DiffWeChatRows({{L"open", {L"OpenChat", L"msg2", 0}}}, true, false, openStates);
+    Require(openAlert.size() == 1 && openAlert[0].unread && openAlert[0].title == L"OpenChat" && openAlert[0].body == L"msg2",
+            "#190: open-chat unread==0 summary change alerts once");
+    Require(DiffWeChatRows({{L"open", {L"OpenChat", L"msg2", 0}}}, true, false, openStates).empty(),
+            "#190: open-chat unread==0 summary change does not repeat");
+
+    const auto withdrawn = DiffWeChatRows({{L"wasunread", {L"WasUnread", L"new summary", 0}}}, true, false, openStates);
+    Require(withdrawn.size() == 1 && !withdrawn[0].unread, "#190: oldUnread > 0 -> 0 stays withdrawal even when summary changes");
+
+    // baseline == false (e.g. ForegroundShown -> None silent sync) updates summary without posting a card.
+    Require(DiffWeChatRows({{L"open", {L"OpenChat", L"sent in foreground", 0}}}, false, false, openStates).empty(),
+            "#190: baseline==false suppresses open-chat unread==0 summary alert");
+    Require(openStates[L"open"].summary == L"sent in foreground" &&
+                DiffWeChatRows({{L"open", {L"OpenChat", L"sent in foreground", 0}}}, true, false, openStates).empty(),
+            "#190: baseline==false silently syncs summary so next baseline==true poll stays quiet");
+
+    // ForegroundShown -> None sync frame (allowOpenSummary = false) suppresses openSummaryRose
+    // while still alerting when real unread messages arrive immediately after leaving WeChat.
+    std::map<std::wstring, WeChatChatState> switchStates{{L"open", {0, L"before"}}, {L"peer", {0, L"p0"}}};
+    const auto switchEv =
+        DiffWeChatRows({{L"open", {L"OpenChat", L"typed in front", 0}}, {L"peer", {L"Peer", L"new msg", 1}}}, true, false, switchStates, false);
+    Require(switchEv.size() == 1 && switchEv[0].unread && switchEv[0].title == L"Peer" && switchStates[L"open"].summary == L"typed in front",
+            "#190: ForegroundShown -> None sync silences open-chat summary while delivering real unread 0 -> 1");
 }
 
 void CheckWeChatThrottle()
@@ -200,6 +238,17 @@ void CheckWeChatThrottle()
         WeChatThrottleInput leave{WeChatBusyState::None, true, 3, 1500, 1000, 1700, true, false, 0, true};
         const auto leaveOut = EvaluateWeChatThrottle(leave);
         Require(leaveOut.waitMs == 0, "breakCooldown bypasses busyUntilTick and 1s gap on None");
+
+        // #190: ForegroundShown with unread==0 keeps 1000 ms wait and 0 polls even on breakCooldown.
+        WeChatThrottleInput fgZeroBreak{WeChatBusyState::ForegroundShown, true, 0, 1500, 1000, 0, true, false, 0, true};
+        const auto fgZeroBreakOut = EvaluateWeChatThrottle(fgZeroBreak);
+        Require(fgZeroBreakOut.waitMs == 1000 && fgZeroBreakOut.clearReadingAndBaseline,
+                "#190: ForegroundShown with unread==0 keeps 1000 ms wait and zero UIA polls on breakCooldown");
+
+        // #190: None 300 ms cooldown wait keeps !clearReadingAndBaseline.
+        WeChatThrottleInput noneCooldown{WeChatBusyState::None, true, 0, 1100, 1000, 1300, false, false, 0, false};
+        const auto noneCooldownOut = EvaluateWeChatThrottle(noneCooldown);
+        Require(noneCooldownOut.waitMs == 200 && !noneCooldownOut.clearReadingAndBaseline, "#190: None 300 ms cooldown keeps !clearReadingAndBaseline");
     }
 }
 
