@@ -134,27 +134,27 @@ bool CheckSkipFailedWorkerAndMissingDesktop()
 
 bool CheckBoundedAsyncRetirementBudget()
 {
+    // Allocation failure prevents starting a session that would lack a guaranteed async retirement slot.
+    auto failSlot = atrium::AsyncWorkSlot::Create([](PTP_WORK_CALLBACK, PVOID) -> PTP_WORK { return nullptr; });
+    if (!Require(!failSlot, "failed preallocated work creation must abort cleanly without leaking"))
+        return false;
+
     HANDLE releaseEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    HANDLE doneEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    if (!Require(releaseEvent && doneEvent, "create retirement events")) {
-        if (releaseEvent)
-            CloseHandle(releaseEvent);
-        if (doneEvent)
-            CloseHandle(doneEvent);
+    if (!Require(releaseEvent != nullptr, "create release event"))
+        return false;
+    auto slot = atrium::AsyncWorkSlot::Create();
+    if (!Require(slot != nullptr && slot->DoneEvent() != nullptr, "preallocate async retirement slot")) {
+        CloseHandle(releaseEvent);
         return false;
     }
-    const bool submitted = atrium::SubmitThreadpoolWork([releaseEvent, doneEvent] {
-        WaitForSingleObject(releaseEvent, 5000);
-        SetEvent(doneEvent);
-    });
+    slot->Retire([releaseEvent] { WaitForSingleObject(releaseEvent, 5000); });
     const ULONGLONG t0 = GetTickCount64();
-    const bool completedInBudget = atrium::WaitBoundedHandles({doneEvent}, 250);
+    const bool completedInBudget = atrium::WaitBoundedHandles({slot->DoneEvent()}, 250);
     const ULONGLONG elapsed = GetTickCount64() - t0;
     SetEvent(releaseEvent);
-    const bool completedAfterRelease = atrium::WaitBoundedHandles({doneEvent}, 2000);
-    CloseHandle(doneEvent);
+    const bool completedAfterRelease = atrium::WaitBoundedHandles({slot->DoneEvent()}, 2000);
     CloseHandle(releaseEvent);
-    return Require(submitted && !completedInBudget && elapsed < 1000 && completedAfterRelease,
+    return Require(!completedInBudget && elapsed < 1000 && completedAfterRelease && slot->Finished(),
                    "stalled async close must time out within 250ms budget without blocking caller");
 }
 

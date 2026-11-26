@@ -123,9 +123,9 @@ void StartWorker(const std::wstring& arguments)
         Log(L"update: could not start background queue (%lu)", GetLastError());
 }
 
-void DownloadRelease(const json::JsonObject& release, const Version& current, const std::function<bool()>& allowDownload)
+void DownloadRelease(const json::JsonObject& release, const Version& current, const std::wstring& tag,
+                     const std::function<bool(const std::wstring&)>& launchDownload)
 {
-    std::wstring tag = release.GetNamedString(L"tag_name").c_str();
     auto latest = ParseVersion(tag);
     if (!latest)
         throw winrt::hresult_invalid_argument(L"Invalid release version");
@@ -138,10 +138,6 @@ void DownloadRelease(const json::JsonObject& release, const Version& current, co
         auto asset = value.GetObject();
         if (asset.GetNamedString(L"name") != assetName)
             continue;
-        if (allowDownload && !allowDownload()) {
-            Log(L"update: skipped automatic download for %s because autoUpdate was disabled", tag.c_str());
-            return;
-        }
         json::JsonObject payload;
         std::wstring version;
         for (unsigned part : *latest)
@@ -152,15 +148,19 @@ void DownloadRelease(const json::JsonObject& release, const Version& current, co
         payload.SetNamedValue(L"Download", asset.GetNamedValue(L"browser_download_url"));
         payload.SetNamedValue(L"Digest", asset.HasKey(L"digest") ? asset.GetNamedValue(L"digest") : json::JsonValue::CreateNullValue());
         using namespace winrt::Windows::Security::Cryptography;
-        StartWorker(L"--queue-update " + std::wstring(CryptographicBuffer::EncodeToBase64String(
-                                                          CryptographicBuffer::ConvertStringToBinary(payload.Stringify(), BinaryStringEncoding::Utf8))
-                                                          .c_str()));
-        Log(L"update: queued background download for %s", tag.c_str());
+        const std::wstring args =
+            L"--queue-update " +
+            std::wstring(
+                CryptographicBuffer::EncodeToBase64String(CryptographicBuffer::ConvertStringToBinary(payload.Stringify(), BinaryStringEncoding::Utf8)).c_str());
+        if (launchDownload && launchDownload(args))
+            Log(L"update: queued background download for %s", tag.c_str());
+        else
+            Log(L"update: skipped automatic download for %s because autoUpdate was disabled", tag.c_str());
         return;
     }
 }
 
-bool CheckLatestRelease(HANDLE stop, const Version& current, bool autoCheck, const std::function<bool()>& allowDownload)
+bool CheckLatestRelease(HANDLE stop, const Version& current, bool autoCheck, const std::function<bool(const std::wstring&)>& launchDownload)
 {
     try {
         winrt::Windows::Web::Http::HttpClient http;
@@ -178,7 +178,7 @@ bool CheckLatestRelease(HANDLE stop, const Version& current, bool autoCheck, con
             return false;
         auto release = json::JsonObject::Parse(request.GetResults());
         std::wstring tag = release.GetNamedString(L"tag_name").c_str();
-        DownloadRelease(release, current, allowDownload);
+        DownloadRelease(release, current, tag, launchDownload);
         Log(L"update: checked latest release %s", tag.c_str());
     } catch (const winrt::hresult_error& error) {
         if (autoCheck)
@@ -292,13 +292,14 @@ void UpdateChecker::Run()
                 manualRequested_ = false;
             }
             checked = Now();
-            auto allowDownload = [this, isAuto] {
-                if (!isAuto)
-                    return true;
+            auto launchDownload = [this, isAuto](const std::wstring& args) {
                 std::lock_guard lock(mutex_);
-                return autoCheck_;
+                if (isAuto && !autoCheck_)
+                    return false;
+                StartWorker(args);
+                return true;
             };
-            if (!CheckLatestRelease(stop_, current, isAuto, allowDownload))
+            if (!CheckLatestRelease(stop_, current, isAuto, launchDownload))
                 break;
             state.SetNamedValue(L"checked", json::JsonValue::CreateNumberValue(double(checked)));
             if (!WriteTextFile(path, state.Stringify().c_str()))

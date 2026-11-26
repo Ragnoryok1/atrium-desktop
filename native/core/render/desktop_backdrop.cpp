@@ -158,7 +158,7 @@ DesktopBackdrop::~DesktopBackdrop()
     StopCapture();
     StopWallpaper();
     std::vector<HANDLE> pending;
-    pending.reserve(retired_.size() + retiredStarting_.size());
+    pending.reserve(retired_.size() + retiredStarting_.size() + retiredCleanups_.size());
     for (const auto& r : retired_) {
         if (r->stop)
             SetEvent(r->stop);
@@ -174,12 +174,16 @@ DesktopBackdrop::~DesktopBackdrop()
         if (r->doneEvent && pending.size() < MAXIMUM_WAIT_OBJECTS)
             pending.push_back(r->doneEvent);
     }
+    for (const auto& cleanup : retiredCleanups_)
+        if (cleanup && cleanup->DoneEvent() && pending.size() < MAXIMUM_WAIT_OBJECTS)
+            pending.push_back(cleanup->DoneEvent());
     WaitBoundedHandles(pending, 250);
     // Bounded wait above prevents blocking render/shutdown if Windows hangs in #66 or Explorer.
     // Threadpool callbacks still retain their own shared_ptr until completion.
     ReclaimRetired();
     retired_.clear();
     retiredStarting_.clear();
+    retiredCleanups_.clear();
 }
 
 void DesktopBackdrop::Update(const std::wstring& mode)
@@ -359,31 +363,32 @@ void DesktopBackdrop::RunCaptureStart(const std::shared_ptr<Starting>& start, co
 
 bool DesktopBackdrop::SubmitCaptureStart(const std::shared_ptr<Starting>& start, const wgd::Direct3D11::IDirect3DDevice& device)
 {
-    return SubmitThreadpoolWork([start, device] { RunCaptureStart(start, device); });
+    auto startSlot = AsyncWorkSlot::Create();
+    if (!startSlot)
+        return false;
+    startSlot->Retire([start, device] { RunCaptureStart(start, device); });
+    return true;
 }
 
-void DesktopBackdrop::RetireCaptureObjects(wgc::GraphicsCaptureItem item, wgc::Direct3D11CaptureFramePool pool, wgc::GraphicsCaptureSession session)
+void DesktopBackdrop::RetireCaptureObjects(std::shared_ptr<AsyncWorkSlot> slot, wgc::GraphicsCaptureItem item, wgc::Direct3D11CaptureFramePool pool,
+                                           wgc::GraphicsCaptureSession session)
 {
     if (!item && !pool && !session)
         return;
-    auto retired = std::make_shared<Starting>(nullptr);
-    retired->item = std::move(item);
-    retired->pool = std::move(pool);
-    retired->session = std::move(session);
-    if (SubmitThreadpoolWork([retired] {
-            ApartmentGuard apartment;
-            wgc::GraphicsCaptureItem localItem = std::move(retired->item);
-            wgc::Direct3D11CaptureFramePool localPool = std::move(retired->pool);
-            wgc::GraphicsCaptureSession localSession = std::move(retired->session);
-            CloseWgcObjects(localItem, localPool, localSession);
-            retired->finished.store(true, std::memory_order_release);
-            if (retired->doneEvent)
-                SetEvent(retired->doneEvent);
-        })) {
-        retiredStarting_.push_back(std::move(retired));
+    if (!slot)
+        slot = AsyncWorkSlot::Create();
+    if (!slot) {
+        CloseWgcObjects(item, pool, session);
         return;
     }
-    CloseWgcObjects(retired->item, retired->pool, retired->session);
+    auto sharedItem = std::make_shared<wgc::GraphicsCaptureItem>(std::move(item));
+    auto sharedPool = std::make_shared<wgc::Direct3D11CaptureFramePool>(std::move(pool));
+    auto sharedSession = std::make_shared<wgc::GraphicsCaptureSession>(std::move(session));
+    slot->Retire([sharedItem, sharedPool, sharedSession] {
+        ApartmentGuard apartment;
+        CloseWgcObjects(*sharedItem, *sharedPool, *sharedSession);
+    });
+    retiredCleanups_.push_back(std::move(slot));
 }
 
 bool DesktopBackdrop::StartCapture()
@@ -395,9 +400,13 @@ bool DesktopBackdrop::StartCapture()
         const DesktopBackdropTarget target = ResolveDesktopBackdropTarget(skip);
         if (!target.hwnd)
             return false;
+        auto retirement = AsyncWorkSlot::Create();
+        if (!retirement)
+            return false;
         auto start = std::make_shared<Starting>(frameEvent_);
         start->desktop = target.hwnd;
         start->isProgman = target.isProgman;
+        start->retirement = std::move(retirement);
         if (!SubmitCaptureStart(start, device_))
             return false;
         starting_ = start;
@@ -448,6 +457,7 @@ bool DesktopBackdrop::StartCapture()
     item_ = std::move(start->item);
     pool_ = std::move(start->pool);
     session_ = std::move(start->session);
+    activeRetirement_ = std::move(start->retirement);
     size_ = start->size;
     targetCheckMs_ = ClockMs() + kTargetCheckMs;
     closedState_ = std::make_shared<ClosedState>(frameEvent_);
@@ -467,14 +477,16 @@ void DesktopBackdrop::StopCapture()
         winrt::Windows::Graphics::Capture::GraphicsCaptureItem abandonItem{nullptr};
         winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool abandonPool{nullptr};
         winrt::Windows::Graphics::Capture::GraphicsCaptureSession abandonSession{nullptr};
+        std::shared_ptr<AsyncWorkSlot> abandonSlot;
         {
             std::lock_guard g(starting_->lock);
             starting_->abandoned = true;
             abandonItem = std::move(starting_->item);
             abandonSession = std::move(starting_->session);
             abandonPool = std::move(starting_->pool); // its handler holds `starting_`
+            abandonSlot = std::move(starting_->retirement);
         }
-        RetireCaptureObjects(std::move(abandonItem), std::move(abandonPool), std::move(abandonSession));
+        RetireCaptureObjects(std::move(abandonSlot), std::move(abandonItem), std::move(abandonPool), std::move(abandonSession));
         if (!starting_->finished.load(std::memory_order_acquire))
             retiredStarting_.push_back(starting_);
         starting_.reset();
@@ -482,7 +494,8 @@ void DesktopBackdrop::StopCapture()
     desktop_ = nullptr;
     closedRevoker_.revoke();
     closedState_.reset();
-    RetireCaptureObjects(std::move(item_), std::move(pool_), std::move(session_));
+    RetireCaptureObjects(std::move(activeRetirement_), std::move(item_), std::move(pool_), std::move(session_));
+    activeRetirement_.reset();
     session_ = nullptr;
     pool_ = nullptr;
     item_ = nullptr;
@@ -519,6 +532,13 @@ void DesktopBackdrop::ReclaimRetired()
         const auto& state = *it;
         if (state->finished.load(std::memory_order_acquire) || (state->doneEvent && WaitForSingleObject(state->doneEvent, 0) == WAIT_OBJECT_0))
             it = retiredStarting_.erase(it);
+        else
+            ++it;
+    }
+    for (auto it = retiredCleanups_.begin(); it != retiredCleanups_.end();) {
+        const auto& cleanup = *it;
+        if (cleanup->Finished() || (cleanup->DoneEvent() && WaitForSingleObject(cleanup->DoneEvent(), 0) == WAIT_OBJECT_0))
+            it = retiredCleanups_.erase(it);
         else
             ++it;
     }

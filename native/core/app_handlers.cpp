@@ -483,7 +483,7 @@ bool HandleUiAndStatusMessage(HWND h, UINT m, WPARAM w, LPARAM l, LRESULT& resul
     case WM_STATUS: HandleStatusMessage(l); return true;
     case WM_TRAY_ICONS: HandleTrayIconsMessage(h, w); return true;
     case WM_ATRIUM_ADD_WIDGET: result = HandleAddWidgetMessage(w, l); return true;
-    case WM_ATRIUM_SETTINGS: ApplySettings(g_app.server->Current(), g_app.server->Saved().autoUpdate); return true;
+    case WM_ATRIUM_SETTINGS: ApplySettings(g_app.server->Current()); return true;
     case WM_ATRIUM_SERVER_READY: TrySignalReadyEvent(h); return true;
     default: return false;
     }
