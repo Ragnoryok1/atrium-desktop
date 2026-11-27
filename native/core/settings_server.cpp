@@ -246,10 +246,17 @@ Settings SettingsServer::Saved()
     return saved_;
 }
 
-void SettingsServer::SetCommittedAutoUpdateCallback(std::function<void(bool)> callback)
+void SettingsServer::SetCommittedAutoUpdateCallback(const std::function<void(bool)>& callback)
 {
-    std::lock_guard g(lock_);
-    onAutoUpdateCommitted_ = std::move(callback);
+    std::lock_guard t(txn_);
+    bool committed = false;
+    {
+        std::lock_guard g(lock_);
+        onAutoUpdateCommitted_ = callback;
+        committed = saved_.autoUpdate;
+    }
+    if (callback)
+        callback(committed);
 }
 
 bool SettingsServer::Save(const Settings& s, std::wstring* warning, std::wstring* error) const

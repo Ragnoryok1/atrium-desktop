@@ -129,7 +129,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
             if (g_app.updates)
                 g_app.updates->SetAutoCheck(on);
         });
-        g_app.updates->SetAutoCheck(g_app.server->Saved().autoUpdate);
     }
     if (!g_app.readyEvent.empty()) {
         SetTimer(g_app.host, kReadyTimer, 50, nullptr);
