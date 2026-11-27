@@ -406,7 +406,11 @@ void InitializeSubsystems(HINSTANCE instance, Settings& settings)
     g_app.displaysReady = true;
     ApplySettings(settings);
     g_app.bar->SetItems(BarItems());
-    g_app.server = std::make_unique<SettingsServer>(g_app.host, settings);
+    g_app.updates = std::make_unique<UpdateChecker>(g_app.host, WM_UPDATE_READY, settings.autoUpdate);
+    g_app.server = std::make_unique<SettingsServer>(g_app.host, settings, std::wstring{}, std::wstring{}, [](bool on) {
+        if (g_app.updates)
+            g_app.updates->SetAutoCheck(on);
+    });
     BindStartMenuCallbacks(settings);
 }
 

@@ -123,13 +123,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
         Log(L"usb: could not register for volume notifications (%lu)", GetLastError());
     SetTimer(g_app.host, kStatusTimer, kStatusMs, nullptr);
     g_app.tray->Refresh();
-    g_app.updates = std::make_unique<UpdateChecker>(g_app.host, WM_UPDATE_READY, settings.autoUpdate);
-    if (g_app.server) {
-        g_app.server->SetCommittedAutoUpdateCallback([](bool on) {
-            if (g_app.updates)
-                g_app.updates->SetAutoCheck(on);
-        });
-    }
     if (!g_app.readyEvent.empty()) {
         SetTimer(g_app.host, kReadyTimer, 50, nullptr);
         PostMessageW(g_app.host, WM_ATRIUM_SERVER_READY, 0, 0);

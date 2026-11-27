@@ -214,13 +214,15 @@ std::wstring SettingsPipeName()
     return L"\\\\.\\pipe\\Atrium.Core." + std::to_wstring(session);
 }
 
-SettingsServer::SettingsServer(HWND host, const Settings& saved, std::wstring pipeName, std::wstring settingsPath)
+SettingsServer::SettingsServer(HWND host, const Settings& saved, std::wstring pipeName, std::wstring settingsPath,
+                               std::function<void(bool)> onAutoUpdateCommitted)
     : host_(host),
       pipeName_(pipeName.empty() ? SettingsPipeName() : std::move(pipeName)),
       settingsPath_(std::move(settingsPath)),
       instanceId_(MakeInstanceId()),
       saved_(saved),
       current_(saved),
+      onAutoUpdateCommitted_(std::move(onAutoUpdateCommitted)),
       quit_(CreateEventW(nullptr, TRUE, FALSE, nullptr))
 {
     thread_ = std::thread([this] { Run(); });
@@ -244,19 +246,6 @@ Settings SettingsServer::Saved()
 {
     std::lock_guard g(lock_);
     return saved_;
-}
-
-void SettingsServer::SetCommittedAutoUpdateCallback(const std::function<void(bool)>& callback)
-{
-    std::lock_guard t(txn_);
-    bool committed = false;
-    {
-        std::lock_guard g(lock_);
-        onAutoUpdateCommitted_ = callback;
-        committed = saved_.autoUpdate;
-    }
-    if (callback)
-        callback(committed);
 }
 
 bool SettingsServer::Save(const Settings& s, std::wstring* warning, std::wstring* error) const
