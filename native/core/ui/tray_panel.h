@@ -34,6 +34,9 @@ inline bool TrayFollowCancelled(DWORD inputTime, DWORD clickInput, DWORD synthet
 class TrayPanel {
 public:
     TrayPanel(HINSTANCE instance, TrayModel& model);
+    ~TrayPanel();
+    TrayPanel(const TrayPanel&) = delete;
+    TrayPanel& operator=(const TrayPanel&) = delete;
 
     // anchor: the tray entry on screen; bar: the bar's glass shape.
     // previous: the window that had the focus before (it gets it back if a click leaves it nowhere).
@@ -41,6 +44,7 @@ public:
     HWND Previous() const { return previous_; }
     void Close();
     bool Visible() const { return surface_.Visible(); }
+    bool MenuSessionActive() const { return menuSession_; }
     ULONGLONG LastClosed() const { return lastClosed_; }
     void Refresh(); // the model has a new list
     void SetAttention(const std::vector<TaskItem>& tasks);
@@ -58,7 +62,17 @@ private:
         std::wstring id;
     };
     void Paint(Canvas& c);
+    void PaintIconCell(Canvas& c, size_t i, float plateR, int iconPx);
+    void PaintFooter(Canvas& c, float w, float footTop, float divider);
     bool Message(UINT m, WPARAM w, LPARAM l, LRESULT& result);
+    bool OnTimerMessage(WPARAM w);
+    void OnMouseDownMessage(POINT pt);
+    void OnMouseUpMessage(UINT m, POINT pt);
+    void OnOutsideMouseDown(LPARAM l);
+    void StartMenuSession(const TrayIcon& icon);
+    void EndMenuSession();
+    bool IsPointInActiveMenu(POINT screenPt) const;
+    bool IsActiveMenuOpen() const;
     void Place();
     std::wstring HitAt(POINT pt) const;
     void Activate(const std::wstring& id, bool right);
@@ -73,11 +87,13 @@ private:
     void HideTip();
     void HoverAt(POINT pt);
     void LeaveHover();
+    bool HasAttention(const TrayIcon& icon) const;
 
     Surface surface_;
     TrayModel& model_;
     std::vector<TrayIcon> icons_;
     std::vector<std::wstring> attention_;
+    std::vector<DWORD> attentionPids_;
     std::vector<Hit> hits_;
     std::wstring hover_, pressed_;
     HWND tip_ = nullptr;            // the standard tooltip, as the system tray shows it
@@ -94,6 +110,13 @@ private:
     float radius_ = 30;
     ULONGLONG lastClosed_ = 0;
     bool private_ = false;
+    bool menuSession_ = false;
+    bool menuObserved_ = false;
+    ULONGLONG menuSessionAt_ = 0;
+    ULONGLONG panelReenterUntil_ = 0;
+    DWORD menuPid_ = 0;
+    std::wstring menuExe_;
+    int mouseWatcherToken_ = 0;
     std::map<std::wstring, motion::Follow> hoverAnim_;
     double openedMs_ = 0;
     std::wstring rippleId_;

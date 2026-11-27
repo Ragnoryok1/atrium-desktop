@@ -16,7 +16,6 @@ namespace {
 constexpr float kHoverTilt = 0.7f, kDepth = 340, kComeTilt = 34, kKeystone = 0.45f;
 constexpr float kStackDx = 9, kStackDy = 8, kStackZ = 26;
 constexpr float kShadowDrop = 6, kShadowAlpha = 0.5f;
-constexpr float kIcon = 34;
 constexpr double kFlightHoldMs = 150, kFlightFadeMs = 150, kFlightStepMs = 34;
 constexpr float kRestoreAt = 0.86f;
 constexpr UINT kFlightIdleMs = 60000;

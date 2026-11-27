@@ -13,9 +13,6 @@
 #include <propkey.h>
 
 #include <winrt/base.h>
-#include <winrt/Windows.ApplicationModel.h>
-#include <winrt/Windows.Foundation.Collections.h>
-#include <winrt/Windows.Management.Deployment.h>
 
 #include <algorithm>
 #include <cwctype>
@@ -27,13 +24,7 @@ namespace {
 
 std::wstring Fold(const std::wstring& s) { return FoldCatalogText(s); }
 
-void SortCatalogApps(std::vector<CatalogApp>& apps)
-{
-    std::ranges::sort(apps, [](const CatalogApp& a, const CatalogApp& b) {
-        return CompareStringEx(LOCALE_NAME_USER_DEFAULT, NORM_IGNORECASE | SORT_DIGITSASNUMBERS, a.name.c_str(), int(a.name.size()), b.name.c_str(),
-                               int(b.name.size()), nullptr, nullptr, 0) == CSTR_LESS_THAN;
-    });
-}
+bool IsPath(const std::wstring& id) { return IsCatalogDrivePath(id); }
 
 std::wstring PropString(IShellItem2* item, const PROPERTYKEY& key)
 {
@@ -72,193 +63,68 @@ std::vector<CatalogApp> Enumerate()
             app.target = PropString(item2.get(), PKEY_Link_TargetParsingPath);
             app.args = PropString(item2.get(), PKEY_Link_Arguments);
         }
-        if (!app.name.empty() && !app.id.empty())
+        if (!app.name.empty() && !app.id.empty() && !IsCatalogTargetMissing(app.target) && !IsCatalogTargetMissing(app.id))
             apps.push_back(std::move(app));
     }
     SortCatalogApps(apps);
     return apps;
 }
 
-bool IsPath(const std::wstring& id) { return IsCatalogDrivePath(id); }
-
 std::wstring ShellTarget(const std::wstring& id) { return IsPath(id) ? id : (id.starts_with(L"::{") ? L"shell:" : L"shell:AppsFolder\\") + id; }
 
-constexpr const wchar_t* kHelperPackages[] = {
-    L"microsoft.windowsfeedbackhub_",
-    L"microsoft.gethelp_",
-    L"microsoft.getstarted_",
-    L"microsoft.windows.devhome_",
-    L"microsoftcorporationii.quickassist_",
-    L"microsoftcorporationii.microsoftfamily_",
-    L"microsoft.powerautomatedesktop_",
-    L"microsoft.xboxgamingoverlay_",
-    L"microsoftwindows.client.",
+struct CatalogIconEntry {
+    std::wstring shellTarget;
+    std::wstring foldedAumid;
+    std::wstring foldedTarget;
+    std::wstring foldedId;
 };
 
-int64_t Ticks(const FILETIME& t) { return int64_t((uint64_t(t.dwHighDateTime) << 32) | t.dwLowDateTime); }
-
-int64_t Created(const std::wstring& path)
-{
-    WIN32_FILE_ATTRIBUTE_DATA fa{};
-    return !path.empty() && GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &fa) ? Ticks(fa.ftCreationTime) : 0;
-}
-
-struct PackageInfo {
-    int64_t installed = 0;
-    bool system = false;
+struct SharedCatalogIndex {
+    std::mutex mutex;
+    int activeInstances = 0;
+    bool hasLoadedOnce = false;
+    std::vector<CatalogIconEntry> entries;
 };
 
-std::map<std::wstring, PackageInfo> CollectInstalledPackages()
+SharedCatalogIndex& SharedCatalog()
 {
-    std::map<std::wstring, PackageInfo> packages;
-    try {
-        namespace Wam = winrt::Windows::ApplicationModel;
-        winrt::Windows::Management::Deployment::PackageManager manager;
-        for (const auto& package : manager.FindPackagesForUser(L"")) {
-            const auto id = package.Id();
-            const std::wstring publisher = Fold(std::wstring(id.Publisher()));
-            const std::wstring family = Fold(std::wstring(id.FamilyName()));
-            const bool system = package.SignatureKind() == Wam::PackageSignatureKind::System || CatalogByMaker(publisher) ||
-                                std::ranges::any_of(kHelperPackages, [&](const wchar_t* p) { return family.starts_with(p); });
-            packages[family] = {package.InstalledDate().time_since_epoch().count(), system};
-        }
-    } catch (const winrt::hresult_error&) {
-        Log(L"catalog: packages' install dates unavailable");
-    }
-    return packages;
+    static SharedCatalogIndex index;
+    return index;
 }
 
-struct ShortcutIndex {
-    std::map<std::wstring, int64_t> byTarget;
-    std::map<std::wstring, int64_t> byName;
-    std::set<std::wstring> systemTargets;
-    std::set<std::wstring> systemNames;
-    std::vector<CatalogApp> shortcuts;
-};
-
-void RecordEarliest(std::map<std::wstring, int64_t>& m, const std::wstring& key, int64_t t)
+std::vector<CatalogIconEntry> BuildCatalogIconEntries(const std::vector<CatalogApp>& apps, const std::vector<CatalogApp>& pins)
 {
-    if (key.empty() || t == 0)
-        return;
-    auto [it, added] = m.try_emplace(key, t);
-    if (!added)
-        it->second = std::min(it->second, t);
-}
-
-bool IsSystemShortcutRelativePath(const std::wstring& within)
-{
-    const size_t slash = within.find(L'\\');
-    if (slash == std::wstring::npos)
-        return false;
-    const std::wstring top = within.substr(0, slash);
-    return IsSystemStartFolder(top) || IsToolStartFolder(top);
-}
-
-void IndexProgramsFolderLinks(const KNOWNFOLDERID& id, ShortcutIndex& index)
-{
-    PWSTR root = nullptr;
-    if (FAILED(SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, nullptr, &root)) || !root) {
-        CoTaskMemFree(root);
-        return;
-    }
-    std::vector<std::pair<std::wstring, std::wstring>> links;
-    const std::wstring programs = root;
-    CollectStartLinks(programs, links);
-    CoTaskMemFree(root);
-    for (const auto& [_, link] : links) {
-        const int64_t t = Created(link);
-        const std::wstring file = link.substr(link.find_last_of(L'\\') + 1);
-        const std::wstring displayName = file.substr(0, file.size() - 4);
-        const std::wstring name = Fold(displayName);
-        const std::wstring within = Fold(link.substr(std::min(link.size(), programs.size() + 1)));
-        const bool inSystem = IsSystemShortcutRelativePath(within);
-        RecordEarliest(index.byName, name, t);
-        if (inSystem)
-            index.systemNames.insert(name);
-        winrt::com_ptr<IShellLinkW> shell;
-        wchar_t target[MAX_PATH] = {};
-        if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(shell.put()))) &&
-            SUCCEEDED(shell.as<IPersistFile>()->Load(link.c_str(), STGM_READ)) && SUCCEEDED(shell->GetPath(target, MAX_PATH, nullptr, SLGP_RAWPATH))) {
-            const std::wstring expandedTarget = ExpandKnownEnvFolders(target);
-            const std::wstring folded = Fold(expandedTarget);
-            RecordEarliest(index.byTarget, folded, t);
-            if (inSystem)
-                index.systemTargets.insert(folded);
-            wchar_t args[1024] = {};
-            if (FAILED(shell->GetArguments(args, static_cast<int>(std::size(args)))))
-                args[0] = L'\0';
-            std::wstring aumid;
-            if (auto props = shell.try_as<IPropertyStore>()) {
-                PROPVARIANT pv;
-                PropVariantInit(&pv);
-                if (SUCCEEDED(props->GetValue(PKEY_AppUserModel_ID, &pv)) && pv.vt == VT_LPWSTR && pv.pwszVal)
-                    aumid = pv.pwszVal;
-                PropVariantClear(&pv);
-            }
-            index.shortcuts.push_back(CatalogApp{displayName, link, aumid, expandedTarget, args, t, inSystem});
-        }
-    }
-}
-
-std::wstring ProgramFilesVendor(const std::wstring& target)
-{
-    const size_t pf = target.find(L"\\program files");
-    if (pf == std::wstring::npos)
-        return {};
-    const size_t afterRoot = target.find(L'\\', pf + 1);
-    if (afterRoot == std::wstring::npos)
-        return {};
-    const size_t nextSlash = target.find(L'\\', afterRoot + 1);
-    return target.substr(afterRoot, nextSlash - afterRoot);
-}
-
-void StampApp(CatalogApp& app, const std::map<std::wstring, PackageInfo>& packages, const ShortcutIndex& index, const std::wstring& windowsDir)
-{
-    const std::wstring& aumid = app.aumid.empty() ? app.id : app.aumid;
-    if (const size_t bang = aumid.find(L'!'); bang != std::wstring::npos) {
-        if (auto it = packages.find(Fold(aumid.substr(0, bang))); it != packages.end()) {
-            app.installed = it->second.installed;
-            app.system = it->second.system;
+    std::vector<CatalogIconEntry> entries;
+    entries.reserve(apps.size() + pins.size());
+    auto append = [&](const CatalogApp& app) {
+        if (app.id.empty())
             return;
-        }
-    }
-    const std::wstring target = Fold(app.target);
-    const std::wstring id = Fold(app.id);
-    const std::wstring exe = target.substr(target.find_last_of(L'\\') + 1);
-    // File Explorer is Windows' own and everyday, as the Finder.
-    app.system = (target.starts_with(windowsDir) && exe != L"explorer.exe") || index.systemTargets.contains(target) ||
-                 index.systemNames.contains(Fold(app.name)) || (id.starts_with(L"microsoft.windows.") && id != L"microsoft.windows.explorer") ||
-                 id.starts_with(L"::{") || CatalogByMaker(ProgramFilesVendor(target));
-    if (IsPath(app.id) && Fold(app.id).ends_with(L".lnk")) {
-        app.installed = Created(app.id);
-        return;
-    }
-    if (auto it = index.byTarget.find(target); !app.target.empty() && it != index.byTarget.end())
-        app.installed = it->second;
-    else if (auto named = index.byName.find(Fold(app.name)); named != index.byName.end())
-        app.installed = named->second;
-    else
-        app.installed = Created(app.target);
-}
-
-// When each app came, for Launchpad's order: a packaged app's package install date; a desktop app's start
-// menu shortcut's creation (the installer made it), else its program's; 0 when unknown (Windows' own).
-void StampInstalled(std::vector<CatalogApp>& apps)
-{
-    const std::map<std::wstring, PackageInfo> packages = CollectInstalledPackages();
-    wchar_t windows[MAX_PATH] = {};
-    GetWindowsDirectoryW(windows, MAX_PATH);
-    const std::wstring windowsDir = Fold(std::wstring(windows) + L"\\");
-    ShortcutIndex index;
-    IndexProgramsFolderLinks(FOLDERID_CommonPrograms, index);
-    IndexProgramsFolderLinks(FOLDERID_Programs, index);
-    if (MergeStartMenuShortcuts(apps, index.shortcuts, &AppCatalog::IsLaunchable))
-        SortCatalogApps(apps);
-    for (CatalogApp& app : apps)
-        StampApp(app, packages, index, windowsDir);
+        entries.push_back({ShellTarget(app.id), Fold(app.aumid), Fold(app.target), Fold(app.id)});
+    };
+    for (const CatalogApp& app : apps)
+        append(app);
+    for (const CatalogApp& pin : pins)
+        append(pin);
+    return entries;
 }
 
 } // namespace
+
+void SortCatalogApps(std::vector<CatalogApp>& apps)
+{
+    std::ranges::sort(apps, [](const CatalogApp& a, const CatalogApp& b) {
+        return CompareStringEx(LOCALE_NAME_USER_DEFAULT, NORM_IGNORECASE | SORT_DIGITSASNUMBERS, a.name.c_str(), int(a.name.size()), b.name.c_str(),
+                               int(b.name.size()), nullptr, nullptr, 0) == CSTR_LESS_THAN;
+    });
+}
+
+bool IsCatalogTargetMissing(const std::wstring& path)
+{
+    if (!IsPath(path) || GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES)
+        return false;
+    const DWORD err = GetLastError();
+    return err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND;
+}
 
 bool AppCatalog::IsLaunchable(const CatalogApp& app)
 {
@@ -277,6 +143,10 @@ AppCatalog::AppCatalog(HWND notify, UINT readyMsg) : notify_(notify), msg_(ready
 {
     if (!stopEvent_)
         winrt::throw_last_error();
+    {
+        std::lock_guard g(SharedCatalog().mutex);
+        ++SharedCatalog().activeInstances;
+    }
     thread_ = std::thread([this] { Worker(); });
 }
 
@@ -292,6 +162,14 @@ AppCatalog::~AppCatalog()
     thread_.join();
     if (stopEvent_)
         CloseHandle(stopEvent_);
+    {
+        std::lock_guard g(SharedCatalog().mutex);
+        if (--SharedCatalog().activeInstances <= 0) {
+            SharedCatalog().activeInstances = 0;
+            SharedCatalog().hasLoadedOnce = false;
+            SharedCatalog().entries.clear();
+        }
+    }
 }
 
 void AppCatalog::Refresh(bool forceLayout)
@@ -439,13 +317,19 @@ void AppCatalog::RunRefresh(bool forceLayout)
 {
     const ULONGLONG t0 = GetTickCount64();
     std::vector<CatalogApp> apps = Enumerate();
-    StampInstalled(apps);
+    StampInstalledApps(apps);
     Log(L"catalog: %zu apps in %llu ms", apps.size(), GetTickCount64() - t0);
 
     RefreshStartLayout(forceLayout);
     std::vector<CatalogFolder> pinGroups;
     std::vector<CatalogApp> pins = ResolveStartLayoutPins(apps, pinGroups);
     std::vector<CatalogFolder> folders = ReadStartMenuFolders(apps);
+    std::vector<CatalogIconEntry> iconEntries = BuildCatalogIconEntries(apps, pins);
+    {
+        std::lock_guard g(SharedCatalog().mutex);
+        SharedCatalog().entries = std::move(iconEntries);
+        SharedCatalog().hasLoadedOnce = true;
+    }
     {
         std::lock_guard g(mutex_);
         apps_ = std::move(apps);
@@ -574,17 +458,59 @@ PinnedApp AppCatalog::PinFor(const CatalogApp& app)
     p.name = app.name;
     // Desktop apps pin by their exe so the pin matches their windows; the rest
     // by the AppsFolder id, which also starts them (shell:AppsFolder\<id>).
+    // Preserve `aumid` alongside `path` so hybrid/packaged apps retain their Start Menu identity.
     std::wstring lower = app.target;
     for (auto& c : lower)
         c = wchar_t(towlower(c));
     if (!app.target.empty() && lower.size() > 4 && lower.substr(lower.size() - 4) == L".exe") {
         p.path = app.target;
         p.args = app.args;
-    } else if (IsPath(app.id))
+        if (!app.aumid.empty())
+            p.aumid = app.aumid;
+        else if (!IsPath(app.id) && app.id.find(L'!') != std::wstring::npos)
+            p.aumid = app.id;
+    } else if (IsPath(app.id)) {
         p.path = app.id; // a shortcut outside the catalog
-    else
+        p.aumid = app.aumid;
+    } else {
         p.aumid = !app.aumid.empty() ? app.aumid : app.id;
+    }
     return p;
+}
+
+std::wstring AppCatalog::IconTargetFor(const std::wstring& aumid, const std::wstring& exePath, const std::wstring& pinPath)
+{
+    const std::wstring foldedAumid = Fold(aumid);
+    const std::wstring foldedExe = Fold(exePath);
+    const std::wstring foldedPin = Fold(pinPath);
+    if (foldedAumid.empty() && foldedExe.empty() && foldedPin.empty())
+        return {};
+    std::lock_guard g(SharedCatalog().mutex);
+    if (!foldedAumid.empty()) {
+        for (const CatalogIconEntry& entry : SharedCatalog().entries) {
+            if (entry.foldedAumid == foldedAumid || entry.foldedId == foldedAumid)
+                return entry.shellTarget;
+        }
+    }
+    if (!foldedExe.empty()) {
+        for (const CatalogIconEntry& entry : SharedCatalog().entries) {
+            if (entry.foldedTarget == foldedExe)
+                return entry.shellTarget;
+        }
+    }
+    if (!foldedPin.empty()) {
+        for (const CatalogIconEntry& entry : SharedCatalog().entries) {
+            if (entry.foldedId == foldedPin || entry.foldedTarget == foldedPin)
+                return entry.shellTarget;
+        }
+    }
+    return {};
+}
+
+bool AppCatalog::HasPendingInitialRefresh()
+{
+    std::lock_guard g(SharedCatalog().mutex);
+    return SharedCatalog().activeInstances > 0 && !SharedCatalog().hasLoadedOnce;
 }
 
 AppCatalog::PreparedQuery AppCatalog::PrepareQuery(const std::wstring& query)
